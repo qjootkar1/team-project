@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>[FUN-14] 분석 결과 그래프 표시 | 담당자 조유빈</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* FUN-14 전용 스타일 */
+    .chart-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .chart-box {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .crop-badge {
+      font-size: 11px;
+      background: #f1f5f9;
+      color: #64748b;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .kpi-mini {
+      display: flex;
+      gap: 20px;
+      font-size: 13px;
+    }
+    .kpi-mini b {
+      color: #205c98;
+    }
+  </style>
+</head>
+<body>
+  <!-- 공통 상단 네비게이션 -->
+  <div id="common-nav"></div>
+
+  <main class="main-container">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="page-title-box">
+        <h1>
+          <span>분석 결과 그래프 표시</span>
+          <span class="badge-tag primary">REQ-07</span>
+          <span class="badge-tag">FUN-14</span>
+          <span class="crop-badge">[크롭/캡처 영역 2/3]</span>
+        </h1>
+        <p>매출·지출 월별 추이, 전년 대비 증감 비교, 계정과목별 지출 구조를 SVG 벡터 차트로 직관적으로 시각화합니다.</p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="outline" onclick="toggleAllView()">📊 차트 정렬 전환</button>
+        <button class="primary" onclick="window.print()">🖨️ 그래프 전체 캡처/인쇄</button>
+      </div>
+    </div>
+
+    <!-- 핵심 지표 요약 카드 -->
+    <div class="cards-grid">
+      <div class="metric-card">
+        <span>연간 총 매출액</span>
+        <strong id="kpi-sales">-</strong>
+        <small id="kpi-sales-sub">전년 대비 +18.3% 성장</small>
+      </div>
+      <div class="metric-card">
+        <span>연간 총 지출액</span>
+        <strong id="kpi-expenses">-</strong>
+        <small id="kpi-expenses-sub">전년 대비 +13.1% 증가</small>
+      </div>
+      <div class="metric-card">
+        <span>연간 당기 마진 (차액)</span>
+        <strong id="kpi-profit" style="color:#166534;">-</strong>
+        <small>매출액 - 지출액 기준</small>
+      </div>
+      <div class="metric-card">
+        <span>최대 지출 발생 월</span>
+        <strong id="kpi-peak-month">3월 (1,120만원)</strong>
+        <small>분기 결산 및 법인세 납부</small>
+      </div>
+    </div>
+
+    <!-- 1. 월별 매출 및 지출 종합 추이 -->
+    <section class="panel">
+      <h2>
+        <span>1. 월별 매출 및 지출 추이 (1~12월 종합)</span>
+        <span class="kpi-mini">기준 연도: <b id="cur-year-1">2024년</b></span>
+      </h2>
+      <div id="chart-monthly-wrap" class="svg-chart-wrap">
+        <!-- 동적 SVG 라인 차트 -->
+      </div>
+      <div class="notice" style="margin-top:14px;">
+        📌 <b>차트 인사이트:</b> 상반기(3월~5월) 마케팅 캠페인 집행과 함께 매출이 급성장하였으며, 하반기에는 지출이 안정화되면서 이익률이 점진적으로 증가하는 패턴을 보입니다.
+      </div>
+    </section>
+
+    <!-- 2. 전년 대비 월별 매출/지출 비교 (2열 그리드) -->
+    <div class="grid-2col" id="compare-grid">
+      <section class="panel">
+        <h2>2. 전년도 대비 월별 매출액 비교</h2>
+        <div id="chart-sales-compare-wrap" class="svg-chart-wrap">
+          <!-- 전년 vs 올해 매출 라인 차트 -->
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>3. 전년도 대비 월별 지출액 비교</h2>
+        <div id="chart-expenses-compare-wrap" class="svg-chart-wrap">
+          <!-- 전년 vs 올해 지출 라인 차트 -->
+        </div>
+      </section>
+    </div>
+
+    <!-- 3. 주요 계정과목별 지출 증감 바 차트 -->
+    <section class="panel">
+      <div class="chart-controls">
+        <h2 style="margin-bottom:0;">4. 주요 계정과목별 연간 지출 비교</h2>
+        <select id="bar-sort-select" onchange="renderBarChart()" style="padding:6px 12px; border-radius:6px; border:1px solid #cbd5e1;">
+          <option value="current">기준 연도 지출 큰 순</option>
+          <option value="diff">전년 대비 증가액 큰 순</option>
+        </select>
+      </div>
+      <div id="chart-bar-wrap" class="svg-chart-wrap">
+        <!-- 수평 바 차트 -->
+      </div>
+    </section>
+
+    <!-- 월별 상세 데이터 테이블 -->
+    <section class="panel">
+      <h2>월별 매출·지출 원장 대조 테이블</h2>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="center">월</th>
+              <th class="num">당해 연도 매출</th>
+              <th class="num">당해 연도 지출</th>
+              <th class="num">월별 영업 차액</th>
+              <th class="num">전년도 매출</th>
+              <th class="num">전년도 지출</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-table-body">
+            <!-- 동적 렌더링 -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="shared.js"></script>
+  <script>
+    let analysisData = null;
+
+    function init() {
+      renderNavigation('fun-14');
+      analysisData = getAnalysisData();
+      renderAllCharts();
+    }
+
+    function renderAllCharts() {
+      if (!analysisData) return;
+
+      const m = analysisData.monthly || [];
+      const c = analysisData.current || {};
+      const changes = analysisData.changes || {};
+
+      // KPI 카드 세팅
+      $('kpi-sales').textContent = won(c.sales);
+      $('kpi-expenses').textContent = won(c.expenses);
+      $('kpi-profit').textContent = won(c.profit);
+      $('cur-year-1').textContent = `${analysisData.year}년`;
+
+      // 1. 월별 매출 및 지출 추이
+      const chart1 = createLineChart([
+        { name: '당해 연도 매출액', color: '#205c98', values: m.map(x => x.currentSales) },
+        { name: '당해 연도 지출액', color: '#d49a62', values: m.map(x => x.currentExpenses) }
+      ], 850, 260);
+      $('chart-monthly-wrap').innerHTML = chart1;
+
+      // 2. 전년 대비 월별 매출
+      const chart2 = createLineChart([
+        { name: `${analysisData.previous || '전년'} 매출`, color: '#9ab6d3', values: m.map(x => x.previousSales) },
+        { name: `${analysisData.year}년 매출`, color: '#205c98', values: m.map(x => x.currentSales) }
+      ], 450, 220);
+      $('chart-sales-compare-wrap').innerHTML = chart2;
+
+      // 3. 전년 대비 월별 지출
+      const chart3 = createLineChart([
+        { name: `${analysisData.previous || '전년'} 지출`, color: '#9ab6d3', values: m.map(x => x.previousExpenses) },
+        { name: `${analysisData.year}년 지출`, color: '#b87842', values: m.map(x => x.currentExpenses) }
+      ], 450, 220);
+      $('chart-expenses-compare-wrap').innerHTML = chart3;
+
+      // 4. 계정과목 바 차트
+      renderBarChart();
+
+      // 5. 월별 테이블
+      const tbody = $('monthly-table-body');
+      tbody.innerHTML = m.map(r => {
+        const profit = r.currentSales - r.currentExpenses;
+        return `
+          <tr>
+            <td class="center"><b>${r.month}월</b></td>
+            <td class="num" style="color:#205c98; font-weight:600;">${won(r.currentSales)}</td>
+            <td class="num" style="color:#b87842;">${won(r.currentExpenses)}</td>
+            <td class="num ${profit >= 0 ? 'up' : 'down'}" style="font-weight:600;">${won(profit)}</td>
+            <td class="num" style="color:#64748b;">${won(r.previousSales)}</td>
+            <td class="num" style="color:#64748b;">${won(r.previousExpenses)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderBarChart() {
+      if (!analysisData) return;
+      const sortMode = $('bar-sort-select').value;
+      let accounts = [...(analysisData.accounts || [])];
+      
+      if (sortMode === 'diff') {
+        accounts.sort((a, b) => (b.amount || 0) - (a.amount || 0));
+      } else {
+        accounts.sort((a, b) => (b.current || 0) - (a.current || 0));
+      }
+
+      const rows = accounts.slice(0, 8).map(x => ({
+        label: x.account.length > 7 ? x.account.slice(0, 6) + '…' : x.account,
+        fullLabel: x.account,
+        a: x.previous,
+        b: x.current
+      }));
+
+      $('chart-bar-wrap').innerHTML = createBarChart(rows, 850);
+    }
+
+    function toggleAllView() {
+      const grid = $('compare-grid');
+      if (grid.style.gridTemplateColumns === '1fr') {
+        grid.style.gridTemplateColumns = '1fr 1fr';
+        toast('2단 나란히 보기 모드로 전환되었습니다.');
+      } else {
+        grid.style.gridTemplateColumns = '1fr';
+        toast('1단 와이드 보기 모드로 전환되었습니다.');
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

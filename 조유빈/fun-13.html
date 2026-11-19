@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>[FUN-13] 주요 증감 원인 요약 | 담당자 조유빈</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* FUN-13 전용 스타일 */
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 7px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid #d0dbe7;
+      background: #fff;
+      color: #4b5e71;
+    }
+    .filter-btn.active {
+      background: #205c98;
+      color: #fff;
+      border-color: #205c98;
+    }
+    .highlight-stat {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .crop-badge {
+      font-size: 11px;
+      background: #f1f5f9;
+      color: #64748b;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <!-- 공통 상단 네비게이션 -->
+  <div id="common-nav"></div>
+
+  <main class="main-container">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="page-title-box">
+        <h1>
+          <span>주요 증감 원인 요약</span>
+          <span class="badge-tag primary">REQ-06</span>
+          <span class="badge-tag">FUN-13</span>
+          <span class="crop-badge">[크롭/캡처 영역 1/3]</span>
+        </h1>
+        <p>전년도 대비 매출 및 주요 지출 계정과목의 급격한 변동 원인을 통계적으로 추출하고 핵심 요약을 제공합니다.</p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="outline" onclick="loadSampleData()">🔄 샘플 데이터 갱신</button>
+        <button class="primary" onclick="window.print()">🖨️ 현재 페이지 인쇄/캡처</button>
+      </div>
+    </div>
+
+    <!-- 요약 브리핑 카드 -->
+    <div class="highlight-stat">
+      <div>
+        <span style="font-size:13px; color:#64748b; font-weight:600;">AI 및 규칙 기반 종합 증감 진단</span>
+        <div id="summary-text" style="font-size:15px; color:#1e293b; font-weight:600; margin-top:6px; line-height:1.6;">
+          로딩 중...
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <span style="font-size:12px; color:#64748b;">분석 기준</span>
+        <div style="font-size:16px; font-weight:800; color:#205c98;" id="period-text">2024년 vs 2023년</div>
+      </div>
+    </div>
+
+    <!-- 필터 바 -->
+    <div class="filter-bar">
+      <span style="font-size:13px; color:#475569; font-weight:600;">원인 분류 필터:</span>
+      <button class="filter-btn active" data-filter="all" onclick="applyFilter('all')">전체 변동 항목</button>
+      <button class="filter-btn" data-filter="up" onclick="applyFilter('up')">🔺 지출 급증 계정 (+)</button>
+      <button class="filter-btn" data-filter="down" onclick="applyFilter('down')">🔻 비용 절감 계정 (-)</button>
+    </div>
+
+    <!-- 증감 원인 카드 그리드 -->
+    <div class="panel">
+      <h2>
+        <span>주요 계정과목별 변동 원인 심층 분석</span>
+        <span style="font-size:12px; font-weight:normal; color:#64748b;" id="cause-count">총 4건</span>
+      </h2>
+      <div class="causes-list" id="causes-container">
+        <!-- 동적 렌더링 -->
+      </div>
+    </div>
+
+    <!-- 상세 변동 대조표 -->
+    <div class="panel">
+      <h2>전년 대비 변동 계정 상세 내역</h2>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>계정과목</th>
+              <th class="num">전년도 지출</th>
+              <th class="num">기준 연도 지출</th>
+              <th class="num">증감액</th>
+              <th class="num">증감률</th>
+              <th>주요 변동 추정 사유</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <!-- 동적 렌더링 -->
+          </tbody>
+        </table>
+      </div>
+      <div class="notice warn" style="margin-top:16px;">
+        💡 <b>분석 안내:</b> 위 원인 요약은 전년 대비 변동액 절대값이 큰 상위 계정과목을 추출한 결과입니다. 정밀한 회계 감사 및 세무 조정을 위해서는 해당 일자의 개별 전표와 증빙자료를 교차 확인하시기 바랍니다.
+      </div>
+    </div>
+  </main>
+
+  <script src="shared.js"></script>
+  <script>
+    let currentFilter = 'all';
+    let analysisData = null;
+
+    function init() {
+      renderNavigation('fun-13');
+      analysisData = getAnalysisData();
+      renderCauses();
+    }
+
+    function renderCauses() {
+      if (!analysisData) return;
+
+      $('summary-text').textContent = analysisData.summary;
+      $('period-text').textContent = `${analysisData.year}년 vs ${analysisData.previous || '전년도'}`;
+
+      let causes = analysisData.causes || [];
+      if (currentFilter === 'up') causes = causes.filter(c => c.type === 'up' || c.amount > 0);
+      else if (currentFilter === 'down') causes = causes.filter(c => c.type === 'down' || c.amount < 0);
+
+      $('cause-count').textContent = `총 ${causes.length}건`;
+
+      const container = $('causes-container');
+      if (!causes.length) {
+        container.innerHTML = `<div style="grid-column: 1/-1; padding: 40px; text-align: center; color: #94a3b8;">해당 조건의 변동 항목이 없습니다.</div>`;
+      } else {
+        container.innerHTML = causes.map(c => `
+          <div class="cause-item ${c.amount > 0 ? 'up' : 'down'}">
+            <div class="cause-header">
+              <b>${esc(c.title)}</b>
+              <span class="cause-tag ${c.amount > 0 ? 'up' : 'down'}">
+                ${c.amount > 0 ? '🔺 비용 증가' : '🔻 비용 절감'}
+              </span>
+            </div>
+            <p class="cause-desc">${esc(c.text)}</p>
+            <div class="cause-meta">
+              <span>계정: <b>${esc(c.account)}</b></span>
+              <span class="${c.amount > 0 ? 'up' : 'down'}">
+                변동폭: ${c.amount > 0 ? '+' : ''}${won(c.amount)} (${rate(c.rate)})
+              </span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // 테이블 렌더링
+      const tbody = $('table-body');
+      const accounts = (analysisData.accounts || []).filter(a => a.amount !== 0);
+      tbody.innerHTML = accounts.map(a => `
+        <tr>
+          <td><b>${esc(a.account)}</b></td>
+          <td class="num">${won(a.previous)}</td>
+          <td class="num">${won(a.current)}</td>
+          <td class="num ${a.amount > 0 ? 'up' : 'down'}">
+            ${a.amount > 0 ? '▲ ' : a.amount < 0 ? '▼ ' : ''}${won(Math.abs(a.amount))}
+          </td>
+          <td class="num ${a.amount > 0 ? 'up' : 'down'}">${rate(a.rate)}</td>
+          <td style="color:#475569;">${esc(a.reason || '세부 전표 검토 필요')}</td>
+        </tr>
+      `).join('');
+    }
+
+    function applyFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+      renderCauses();
+    }
+
+    function loadSampleData() {
+      localStorage.removeItem('accounting-analysis-cache');
+      analysisData = getAnalysisData();
+      renderCauses();
+      toast('샘플 데이터가 성공적으로 갱신되었습니다.');
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

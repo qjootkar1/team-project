@@ -1,0 +1,62 @@
+:root {
+  font-family: system-ui, "Malgun Gothic", sans-serif;
+  color: #192a2e;
+  background: #f4f7f6;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(100% - 32px, 740px); margin: clamp(24px, 7vw, 72px) auto; }
+h1 { margin: 0 0 10px; font-size: clamp(1.8rem, 5vw, 2.6rem); letter-spacing: -.04em; }
+header p { margin: 0 0 24px; color: #405853; }
+form, section {
+  background: #fff;
+  border: 1px solid #c9d7d3;
+  border-radius: 14px;
+  padding: clamp(16px, 4vw, 28px);
+}
+form { display: grid; gap: 16px; }
+section { margin-top: 16px; border-top: 4px solid #146358; }
+h2, form p { margin: 0; }
+label { display: grid; gap: 7px; font-weight: 650; }
+.period { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+input, select, button { font: inherit; }
+input:not([type=checkbox]), select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #819c95;
+  border-radius: 7px;
+  padding: 9px 10px;
+}
+input[type=file] { font-weight: 400; }
+.check { display: flex; align-items: baseline; gap: 7px; font-weight: 400; line-height: 1.55; }
+button {
+  justify-self: start;
+  border: 1px solid #146358;
+  border-radius: 7px;
+  background: #146358;
+  color: #fff;
+  font-weight: 650;
+  padding: 9px 15px;
+  cursor: pointer;
+}
+button.secondary { background: #edf5f2; color: #12493f; }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 3px solid #2373aa; outline-offset: 2px; }
+#error { color: #9c2525; }
+#file-status, #range { color: #405853; line-height: 1.5; }
+#amount { margin: 6px 0; font-size: clamp(1.55rem, 6vw, 2.4rem); font-weight: 750; color: #12594e; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; line-height: 1.5; }
+dt { font-weight: 650; }
+dd { margin: 0; }
+.monthly-sales { width: 100%; margin-top: 24px; border-collapse: collapse; }
+.monthly-sales caption { text-align: left; font-size: 1.15rem; font-weight: 700; margin-bottom: 10px; }
+.monthly-sales th, .monthly-sales td { padding: 8px 12px; border-bottom: 1px solid #dce7e3; text-align: left; }
+.monthly-sales tr > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.monthly-sales thead, .monthly-sales tfoot { background: #edf5f2; font-weight: 700; }
+.monthly-sales tbody th { font-weight: 500; }
+#monthly-basis { margin: 12px 0 18px; color: #405853; line-height: 1.5; }
+summary { cursor: pointer; }
+@media (max-width: 450px) {
+  .period, dl { grid-template-columns: 1fr; }
+}

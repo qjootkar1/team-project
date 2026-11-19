@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>다음 연도 매출 예측</title>
+  <link rel="stylesheet" href="./src/style.css">
+  <script type="module" src="./src/app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>다음 연도 매출 예측</h1>
+      <p>분개장을 불러와 다음 연도의 연간·월별 예상 순매출을 조회합니다.</p>
+    </header>
+    <form id="forecast-form">
+      <label>분개장 파일
+        <input id="journal" type="file" accept=".csv,.json">
+      </label>
+      <button id="example" class="secondary" type="button">예시 분개장 불러오기</button>
+      <p id="file-status" role="status">UTF-8 CSV 또는 분개장 JSON을 선택하세요.</p>
+      <div class="period">
+        <label>자료 시작 연도<input id="first-year" type="number" min="2000" step="1" required></label>
+        <label>기준 연도<input id="base-year" type="number" min="2000" step="1" required></label>
+        <label>마감 월<select id="closed-month" required></select></label>
+      </div>
+      <label>추가 매출 계정 (선택)
+        <input id="accounts" type="text" placeholder="예) 설치매출, 40100 상품매출" maxlength="3000">
+      </label>
+      <label class="check"><input id="confirmed" type="checkbox" required>
+        자료 시작 연도 1월부터 마감 월까지 분개 입력을 완료했습니다. 거래가 없는 달은 0원으로 집계합니다.
+      </label>
+      <button id="predict" type="submit" disabled>예상 매출 계산</button>
+      <p id="error" role="alert" hidden></p>
+    </form>
+    <section id="result" aria-labelledby="result-title" aria-live="polite" hidden>
+      <h2 id="result-title"></h2>
+      <p id="amount"></p>
+      <p id="range"></p>
+      <dl>
+        <dt>마감 월까지 실제 순매출</dt><dd id="actual"></dd>
+        <dt>적용 방식</dt><dd id="method"></dd>
+        <dt>과거 연간 예측 오차</dt><dd id="validation"></dd>
+      </dl>
+      <table class="monthly-sales">
+        <caption id="monthly-title"></caption>
+        <thead><tr><th scope="col">월</th><th scope="col">예상 순매출</th></tr></thead>
+        <tbody id="monthly-rows"></tbody>
+        <tfoot><tr><th scope="row">연간 합계</th><td id="monthly-total"></td></tr></tfoot>
+      </table>
+      <p id="monthly-basis"></p>
+      <details><summary>집계 계정 확인</summary><p id="included"></p><p id="excluded"></p></details>
+    </section>
+  </main>
+</body>
+</html>
