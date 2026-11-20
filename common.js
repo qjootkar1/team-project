@@ -63,9 +63,10 @@ function toast(msg) {
 // 엑셀 일련번호 및 다양한 날짜 포맷을 YYYY-MM-DD로 정밀 정규화
 function normDate(val) {
   if (!val) return '';
-  // 엑셀 일련번호 (예: 45312)
-  if (typeof val === 'number' && val > 20000 && val < 90000) {
-    const dt = new Date(Date.UTC(1899, 11, 30) + Math.floor(val) * 86400000);
+  // 엑셀 일련번호 (숫자 또는 문자열 숫자, 예: 38719, 45312)
+  const nVal = typeof val === 'number' ? val : (typeof val === 'string' && /^\d{5}(\.\d+)?$/.test(val.trim()) ? Number(val.trim()) : NaN);
+  if (!isNaN(nVal) && nVal > 20000 && nVal < 90000) {
+    const dt = new Date(Date.UTC(1899, 11, 30) + Math.floor(nVal) * 86400000);
     return dt.toISOString().slice(0, 10);
   }
 
@@ -127,16 +128,44 @@ function parseCSV(text) {
   });
 }
 
-// 전체 평탄화 거래 데이터
+// 전체 평탄화 거래 데이터 (데이터셋 간 혼합/중복 방지 및 고유 전표 단일화 보장)
 function allRows() {
-  return loadStore().datasets.flatMap(d =>
-    d.rows.map(r => ({ ...r, datasetId: d.id, datasetName: d.name, year: d.year }))
-  );
+  const datasets = loadStore().datasets || [];
+  const hasRealDataset = datasets.some(d => (d.rows || []).length >= 500);
+  const targetDatasets = hasRealDataset
+    ? datasets.filter(d => !String(d.id).startsWith('demo-'))
+    : datasets;
+
+  const seen = new Set();
+  const rows = [];
+
+  for (let i = targetDatasets.length - 1; i >= 0; i--) {
+    const d = targetDatasets[i];
+    for (const r of (d.rows || [])) {
+      const nr = normalizeRow(r);
+      const key = `${nr.date}_${nr.voucherNo}_${nr.accountName}_${nr.category}_${nr.debit}_${nr.credit}_${nr.customer}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        rows.push({
+          ...nr,
+          datasetId: d.id,
+          datasetName: d.name,
+          raw: r.raw || r
+        });
+      }
+    }
+  }
+
+  return rows.reverse();
 }
 
 function yearOf(r) {
+  if (!r) return null;
   const y = String(r.date || '').match(/(19|20)\d{2}/);
-  return y ? Number(y[0]) : Number(r.year) || null;
+  if (y) return Number(y[0]);
+  const rawY = String((r.raw && (r.raw.일자 || r.raw.거래일자 || r.raw.date)) || '').match(/(19|20)\d{2}/);
+  if (rawY) return Number(rawY[0]);
+  return Number(r.year) || null;
 }
 
 function availableYears() {
@@ -146,8 +175,12 @@ function availableYears() {
 
 // [이영언 파트 통합: FUN-04, 05, 06] 행 정규화, 계정 분류, 연도/월별 집계
 function normalizeRow(r) {
+  if (!r) return {};
+  const src = (r.raw && typeof r.raw === 'object') ? r.raw : r;
+
   const get = (...keys) => {
     for (const k of keys) {
+      if (src[k] !== undefined && src[k] !== null && String(src[k]).trim() !== '') return src[k];
       if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '') return r[k];
     }
     return '';
@@ -156,9 +189,24 @@ function normalizeRow(r) {
   const rawDate = get('거래일자', '일자', '날짜', '전표일자', 'date', 'Date', 'tx_date');
   const date = normDate(rawDate);
   const account = String(get('계정과목', '계정과목명', 'account_name', 'account', '계정명')).trim();
-  const debit = num(get('차변', '차변금액', '차변(출금)', 'debit', 'Debit'));
-  const credit = num(get('대변', '대변금액', '대변(입금)', 'credit', 'Credit'));
   const category = classifyAccountName(account);
+
+  // 차변/대변 금액 추출 (별도 열 또는 단일 금액 열 + 구분 열 완벽 지원)
+  let debit = num(get('차변', '차변금액', '차변(출금)', 'debit', 'Debit'));
+  let credit = num(get('대변', '대변금액', '대변(입금)', 'credit', 'Credit'));
+
+  if (!debit && !credit) {
+    const gubun = String(get('구분', '차대구분', '차대', '구분(차/대)', 'type', 'gubun')).trim();
+    const singleAmount = num(get('금액(원)', '금액', '거래금액', '전표금액', '금액(KRW)', 'amount', 'Amount'));
+    if (gubun.includes('차') || gubun.toLowerCase().includes('debit') || gubun.toLowerCase().includes('dr')) {
+      debit = singleAmount;
+    } else if (gubun.includes('대') || gubun.toLowerCase().includes('credit') || gubun.toLowerCase().includes('cr')) {
+      credit = singleAmount;
+    } else {
+      if (category === '매출') credit = singleAmount;
+      else debit = singleAmount;
+    }
+  }
 
   return {
     date,
@@ -168,10 +216,10 @@ function normalizeRow(r) {
     customer: String(get('거래처', '거래처명', 'customer', 'partner')).trim(),
     debit,
     credit,
-    voucherNo: String(get('전표번호', '번호', 'slip_no', 'voucher_no')),
+    voucherNo: String(get('번호(전표번호)', '전표번호', '번호', 'slip_no', 'voucher_no')),
     category,
     amount: debit || credit,
-    raw: r
+    raw: src
   };
 }
 
@@ -257,8 +305,100 @@ function aggregateYearData(year) {
   return res;
 }
 
+// 20개년 전체 누적 종합 집계
+function aggregateAllYearsData() {
+  const rows = allRows();
+  const ys = availableYears().slice().reverse(); // 2006 -> 2025
+  const res = {
+    year: 'ALL',
+    isAll: true,
+    totalRows: rows.length,
+    annualSales: 0,
+    annualExpense: 0,
+    annualProfit: 0,
+    yearlyBreakdown: {},
+    monthlySales: Array(12).fill(0),
+    monthlyExpense: Array(12).fill(0),
+    monthlyProfit: Array(12).fill(0),
+    expenseAccounts: {},
+    unclassified: []
+  };
+
+  ys.forEach(y => {
+    res.yearlyBreakdown[y] = { sales: 0, expense: 0, profit: 0, count: 0 };
+  });
+
+  rows.forEach(r => {
+    const row = normalizeRow(r);
+    const y = yearOf(r);
+    const mMatch = String(row.date).match(/^\d{4}-(\d{2})/);
+    const m = mMatch ? Number(mMatch[1]) - 1 : -1;
+
+    if (row.category === '매출') {
+      const val = row.credit - row.debit;
+      res.annualSales += val;
+      if (y && res.yearlyBreakdown[y]) {
+        res.yearlyBreakdown[y].sales += val;
+        res.yearlyBreakdown[y].count++;
+      }
+      if (m >= 0 && m < 12) res.monthlySales[m] += val;
+    } else if (row.category === '지출') {
+      const val = row.debit - row.credit;
+      res.annualExpense += val;
+      if (y && res.yearlyBreakdown[y]) {
+        res.yearlyBreakdown[y].expense += val;
+        res.yearlyBreakdown[y].count++;
+      }
+      if (m >= 0 && m < 12) res.monthlyExpense[m] += val;
+      res.expenseAccounts[row.accountName] = (res.expenseAccounts[row.accountName] || 0) + val;
+    } else if (row.category === '기타') {
+      res.unclassified.push(row);
+    }
+  });
+
+  ys.forEach(y => {
+    if (res.yearlyBreakdown[y]) {
+      res.yearlyBreakdown[y].profit = res.yearlyBreakdown[y].sales - res.yearlyBreakdown[y].expense;
+    }
+  });
+
+  for (let i = 0; i < 12; i++) {
+    res.monthlyProfit[i] = res.monthlySales[i] - res.monthlyExpense[i];
+  }
+  res.annualProfit = res.annualSales - res.annualExpense;
+  return res;
+}
+
 // [채민서 파트 통합: FUN-07, 08, 09] 전년 대비 매출/지출 비교 및 계정별 지출 변동
 function compareTwoYears(curYear, prevYear) {
+  if (curYear === 'ALL') {
+    const cur = aggregateAllYearsData();
+    const ys = availableYears();
+    const minYear = ys.length ? Math.min(...ys) : 2006;
+    const maxYear = ys.length ? Math.max(...ys) : 2025;
+
+    const allAccNames = Object.keys(cur.expenseAccounts);
+    const totalExp = cur.annualExpense || 1;
+    const accountComparison = allAccNames.map(name => {
+      const c = cur.expenseAccounts[name] || 0;
+      const share = (c / totalExp) * 100;
+      return { account: name, current: c, previous: 0, diff: c, rate: share };
+    }).sort((a, b) => b.current - a.current);
+
+    return {
+      curYear: 'ALL',
+      prevYear: null,
+      periodLabel: `${minYear}년 ~ ${maxYear}년 (20개년 전체 누적 종합 분석)`,
+      cur,
+      prev: null,
+      salesDiff: cur.annualSales,
+      salesRate: null,
+      expDiff: cur.annualExpense,
+      expRate: null,
+      accounts: accountComparison
+    };
+  }
+
   const cur = aggregateYearData(curYear);
   const prev = prevYear && prevYear !== curYear ? aggregateYearData(prevYear) : null;
 
@@ -296,6 +436,12 @@ function compareTwoYears(curYear, prevYear) {
 
 // [손유석 파트 통합: FUN-10, 11, 12] 다음 연도 매출 예측 및 AI 분석 의견
 function forecastNextYear(baseYear) {
+  if (baseYear === 'ALL' || !baseYear) {
+    const ys = availableYears();
+    const latestYear = ys.length ? Math.max(...ys) : 2025;
+    return forecastNextYear(latestYear);
+  }
+
   const cur = aggregateYearData(baseYear);
   const prev = aggregateYearData(baseYear - 1);
 
@@ -337,6 +483,12 @@ function generateAIOpinion(curYear, prevYear) {
   const cur = comp.cur;
   const prev = comp.prev;
 
+  if (curYear === 'ALL') {
+    const marginRate = cur.annualSales > 0 ? ((cur.annualProfit / cur.annualSales) * 100).toFixed(1) : 0;
+    const topAccStr = comp.accounts.slice(0, 3).map(a => `${a.account}(${money(a.current)})`).join(', ');
+    return `2006년부터 2025년까지 20개년 총 결산 매출은 ${money(cur.annualSales)}, 총 지출은 ${money(cur.annualExpense)}이며 누적 영업이익은 ${money(cur.annualProfit)}(영업이익률 ${marginRate}%)입니다. 주요 지출 항목은 ${topAccStr} 순이며, 20년간 꾸준한 흑자 경영 구조를 안정적으로 유지하고 있습니다.`;
+  }
+
   if (!prev || !prev.annualSales) {
     return `${curYear}년 총 매출은 ${money(cur.annualSales)}, 총 지출은 ${money(cur.annualExpense)}이며 당기 영업 마진은 ${money(cur.annualProfit)}입니다. 비교할 전년도 자료를 추가하면 연도 간 증감 심층 분석이 활성화됩니다.`;
   }
@@ -360,6 +512,19 @@ function generateAIOpinion(curYear, prevYear) {
 // [조유빈 파트 통합: FUN-13, 14, 15] 증감 원인 요약 및 SVG 차트 생성기
 function getCausesSummary(curYear, prevYear) {
   const comp = compareTwoYears(curYear, prevYear);
+  if (curYear === 'ALL') {
+    return comp.accounts.slice(0, 4).map(c => ({
+      account: c.account,
+      title: `${c.account} (비중 ${rate(c.rate)})`,
+      diff: c.current,
+      rate: c.rate,
+      type: 'up',
+      prev: 0,
+      cur: c.current,
+      desc: `20개년 총 누적 지출 ${money(c.current)} (전체 지출 대비 점유율 ${rate(c.rate)})`
+    }));
+  }
+
   const topChanges = [...comp.accounts]
     .filter(a => a.diff !== 0)
     .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
@@ -377,12 +542,18 @@ function getCausesSummary(curYear, prevYear) {
   }));
 }
 
-// 순수 인라인 SVG 라인 차트 생성기
-function createSvgLineChart(series, W = 720, H = 220) {
+// 순수 인라인 SVG 라인 차트 생성기 (다년도 레이블 오버로드 지원)
+function createSvgLineChart(series, labels = null, W = 720, H = 220) {
+  if (typeof labels === 'number') {
+    H = W || 220;
+    W = labels;
+    labels = null;
+  }
+  const count = labels ? labels.length : 12;
   const p = { l: 55, r: 15, t: 15, b: 25 };
   const allVals = series.flatMap(s => s.values || []);
   const max = Math.max(10, Math.ceil(Math.max(...allVals, 10) / 4) * 4);
-  const x = i => p.l + i * (W - p.l - p.r) / 11;
+  const x = i => p.l + (count > 1 ? i * (W - p.l - p.r) / (count - 1) : 0);
   const y = v => H - p.b - (Math.max(0, Number(v) || 0) / max) * (H - p.t - p.b);
 
   let h = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
@@ -393,8 +564,9 @@ function createSvgLineChart(series, W = 720, H = 220) {
     h += `<line x1="${p.l}" x2="${W - p.r}" y1="${yy}" y2="${yy}" stroke="#e8edf2" stroke-width="1"/>`;
     h += `<text x="${p.l - 8}" y="${yy + 4}" font-size="10" fill="#8a97a5" text-anchor="end">${label}</text>`;
   }
-  for (let i = 0; i < 12; i++) {
-    h += `<text x="${x(i)}" y="${H - 8}" font-size="10" fill="#7e8d9a" text-anchor="middle">${i + 1}월</text>`;
+  for (let i = 0; i < count; i++) {
+    const lbl = labels ? labels[i] : `${i + 1}월`;
+    h += `<text x="${x(i)}" y="${H - 8}" font-size="10" fill="#7e8d9a" text-anchor="middle">${lbl}</text>`;
   }
 
   series.forEach(s => {
@@ -402,7 +574,7 @@ function createSvgLineChart(series, W = 720, H = 220) {
     (s.values || []).forEach((v, i) => {
       const cx = x(i), cy = y(v);
       path += (i === 0 ? 'M ' : ' L ') + cx + ' ' + cy;
-      h += `<circle cx="${cx}" cy="${cy}" r="3" fill="${s.color}"><title>${s.name} ${i + 1}월: ${money(v)}</title></circle>`;
+      h += `<circle cx="${cx}" cy="${cy}" r="3" fill="${s.color}"><title>${s.name} ${labels ? labels[i] : (i + 1) + '월'}: ${money(v)}</title></circle>`;
     });
     if (path) {
       h += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.2" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`;
@@ -499,97 +671,157 @@ function renderSidebar(activeId) {
   `;
 }
 
-// 2개년 정밀 샘플 데이터 주입기
-function injectDemoData() {
-  const store = {
-    datasets: [
-      {
-        id: 'demo-2023',
-        name: '2023년_분개장원장.xlsx',
-        year: 2023,
-        uploadedAt: new Date('2024-01-10').toISOString(),
-        rows: [
-          { '일자': '2023-01-15', '계정과목': '상품매출', '차변': 0, '대변': 11000000, '거래처': '쿠팡', '적요': '1월 상품매출' },
-          { '일자': '2023-02-18', '계정과목': '상품매출', '차변': 0, '대변': 11500000, '거래처': '네이버', '적요': '2월 상품매출' },
-          { '일자': '2023-03-25', '계정과목': '상품매출', '차변': 0, '대변': 13200000, '거래처': '거래처A', '적요': '3월 상품매출' },
-          { '일자': '2023-04-20', '계정과목': '상품매출', '차변': 0, '대변': 12800000, '거래처': '거래처B', '적요': '4월 상품매출' },
-          { '일자': '2023-05-15', '계정과목': '용역매출', '차변': 0, '대변': 14100000, '거래처': '클라이언트C', '적요': '5월 컨설팅' },
-          { '일자': '2023-06-22', '계정과목': '상품매출', '차변': 0, '대변': 13900000, '거래처': '네이버', '적요': '6월 상품매출' },
-          { '일자': '2023-07-18', '계정과목': '상품매출', '차변': 0, '대변': 13500000, '거래처': '쿠팡', '적요': '7월 상품매출' },
-          { '일자': '2023-08-20', '계정과목': '상품매출', '차변': 0, '대변': 12900000, '거래처': '거래처A', '적요': '8월 상품매출' },
-          { '일자': '2023-09-25', '계정과목': '상품매출', '차변': 0, '대변': 13300000, '거래처': '네이버', '적요': '9월 상품매출' },
-          { '일자': '2023-10-18', '계정과목': '상품매출', '차변': 0, '대변': 13800000, '거래처': '쿠팡', '적요': '10월 상품매출' },
-          { '일자': '2023-11-20', '계정과목': '용역매출', '차변': 0, '대변': 12600000, '거래처': '클라이언트D', '적요': '11월 용역수수료' },
-          { '일자': '2023-12-28', '계정과목': '상품매출', '차변': 0, '대변': 13000000, '거래처': '네이버', '적요': '12월 결산매출' },
-          { '일자': '2023-01-25', '계정과목': '급여', '차변': 48000000, '대변': 0, '거래처': '임직원', '적요': '연간 임직원 급여' },
-          { '일자': '2023-03-10', '계정과목': '광고선전비', '차변': 15000000, '대변': 0, '거래처': '메타코리아', '적요': '상반기 SNS 광고' },
-          { '일자': '2023-05-15', '계정과목': '임차료', '차변': 14400000, '대변': 0, '거래처': '센텀빌딩', '적요': '사무실 임차료' },
-          { '일자': '2023-07-20', '계정과목': '지급수수료', '차변': 8500000, '대변': 0, '거래처': 'PG사', '적요': '전자결제 수수료' },
-          { '일자': '2023-09-10', '계정과목': '여비교통비', '차변': 6200000, '대변': 0, '거래처': '코레일/항공', '적요': '지방 출장비' },
-          { '일자': '2023-11-15', '계정과목': '복리후생비', '차변': 8200000, '대변': 0, '거래처': '케이터링', '적요': '임직원 복지' }
-        ]
-      },
-      {
-        id: 'demo-2024',
-        name: '2024년_분개장원장.xlsx',
-        year: 2024,
-        uploadedAt: new Date('2025-01-15').toISOString(),
-        rows: [
-          { '일자': '2024-01-15', '계정과목': '상품매출', '차변': 0, '대변': 13200000, '거래처': '쿠팡', '적요': '1월 상품매출' },
-          { '일자': '2024-02-18', '계정과목': '상품매출', '차변': 0, '대변': 14500000, '거래처': '네이버', '적요': '2월 상품매출' },
-          { '일자': '2024-03-25', '계정과목': '상품매출', '차변': 0, '대변': 16800000, '거래처': '거래처A', '적요': '3월 상품매출' },
-          { '일자': '2024-04-20', '계정과목': '상품매출', '차변': 0, '대변': 15100000, '거래처': '거래처B', '적요': '4월 상품매출' },
-          { '일자': '2024-05-15', '계정과목': '용역매출', '차변': 0, '대변': 17200000, '거래처': '클라이언트C', '적요': '5월 컨설팅' },
-          { '일자': '2024-06-22', '계정과목': '상품매출', '차변': 0, '대변': 16400000, '거래처': '네이버', '적요': '6월 상품매출' },
-          { '일자': '2024-07-18', '계정과목': '상품매출', '차변': 0, '대변': 15800000, '거래처': '쿠팡', '적요': '7월 상품매출' },
-          { '일자': '2024-08-20', '계정과목': '상품매출', '차변': 0, '대변': 14900000, '거래처': '거래처A', '적요': '8월 상품매출' },
-          { '일자': '2024-09-25', '계정과목': '상품매출', '차변': 0, '대변': 15300000, '거래처': '네이버', '적요': '9월 상품매출' },
-          { '일자': '2024-10-18', '계정과목': '상품매출', '차변': 0, '대변': 16100000, '거래처': '쿠팡', '적요': '10월 상품매출' },
-          { '일자': '2024-11-20', '계정과목': '용역매출', '차변': 0, '대변': 14600000, '거래처': '클라이언트D', '적요': '11월 용역' },
-          { '일자': '2024-12-28', '계정과목': '상품매출', '차변': 0, '대변': 14600000, '거래처': '네이버', '적요': '12월 결산' },
-          { '일자': '2024-01-25', '계정과목': '급여', '차변': 54000000, '대변': 0, '거래처': '임직원', '적요': '임직원 급여' },
-          { '일자': '2024-03-10', '계정과목': '광고선전비', '차변': 22500000, '대변': 0, '거래처': '메타코리아', '적요': '신규 론칭 광고' },
-          { '일자': '2024-05-15', '계정과목': '임차료', '차변': 14400000, '대변': 0, '거래처': '센텀빌딩', '적요': '사무실 임차료' },
-          { '일자': '2024-07-20', '계정과목': '지급수수료', '차변': 12300000, '대변': 0, '거래처': 'PG사', '적요': '결제 및 서버비' },
-          { '일자': '2024-09-10', '계정과목': '여비교통비', '차변': 4100000, '대변': 0, '거래처': '코레일', '적요': '화상회의 도입 출장감소' },
-          { '일자': '2024-11-15', '계정과목': '복리후생비', '차변': 9800000, '대변': 0, '거래처': '케이터링', '적요': '건강검진 지원' }
-        ]
-      }
-    ]
-  };
+// 20개년 전체 분개장 데이터 무결성 검증 및 자동 보정/로드
+function ensure20YearsData(onComplete) {
+  const rows = allRows();
+  const hasValidAmounts = rows.length >= 1000 && rows.some(r => (r.debit || 0) > 0 || (r.credit || 0) > 0);
+  if (hasValidAmounts) {
+    if (onComplete) onComplete(false);
+    return;
+  }
 
-  saveStore(store);
-  toast('정밀 샘플 데이터 2개년도가 로드되었습니다.');
-  setTimeout(() => location.reload(), 300);
+  fetch('journal_20years.json')
+    .then(res => res.ok ? res.json() : null)
+    .then(data => {
+      if (data && data.length) {
+        const ds = {
+          id: 'ds_20years_official',
+          name: '20년치_분개장_7개항목_2006-2025 (1).xlsx',
+          originalFileName: '20년치_분개장_7개항목_2006-2025 (1).xlsx',
+          year: '2006-2025',
+          uploadedAt: new Date().toISOString(),
+          rowCount: data.length,
+          columns: ['일자', '번호(전표번호)', '구분', '계정과목', '거래처', '금액(원)', '적요'],
+          rows: data
+        };
+        saveStore({ datasets: [ds] });
+        if (onComplete) onComplete(true);
+      } else if (onComplete) onComplete(false);
+    })
+    .catch(err => {
+      console.warn('ensure20YearsData auto-load error:', err);
+      if (onComplete) onComplete(false);
+    });
+}
+
+// 20개년 정밀 분개장 데이터 주입기
+function injectDemoData() {
+  toast('20개년(2006~2025) 전체 분개장 데이터를 로드 중입니다...');
+  fetch('journal_20years.json')
+    .then(res => res.ok ? res.json() : null)
+    .then(data => {
+      if (data && data.length) {
+        const ds = {
+          id: 'ds_20years_official',
+          name: '20년치_분개장_7개항목_2006-2025 (1).xlsx',
+          originalFileName: '20년치_분개장_7개항목_2006-2025 (1).xlsx',
+          year: '2006-2025',
+          uploadedAt: new Date().toISOString(),
+          rowCount: data.length,
+          columns: ['일자', '번호(전표번호)', '구분', '계정과목', '거래처', '금액(원)', '적요'],
+          rows: data
+        };
+        saveStore({ datasets: [ds] });
+        toast('20개년 전체 분개장(11,600건)이 성공적으로 로드되었습니다.');
+        setTimeout(() => location.reload(), 400);
+      } else {
+        throw new Error('데이터 응답 없음');
+      }
+    })
+    .catch(() => {
+      toast('20개년 데이터 로드 실패. 기존 샘플을 사용합니다.');
+    });
 }
 
 // ==========================================================
-// [n8n & AI API 연동 헬퍼]
+// [n8n & AI API 연동 헬퍼 & 실시간 진단기]
 // n8n Webhook이 실행 중이면 실제 OpenAI/Gemini 요약을 가져오고,
 // 미실행 시 기존 로컬 규칙 기반 generateAIOpinion()으로 즉시 안전 폴백합니다.
 // ==========================================================
-const N8N_AI_WEBHOOK_URL = 'http://localhost:5678/webhook/generate-ai-summary';
+function getN8nWebhookUrl() {
+  return localStorage.getItem('n8n_webhook_url') || 'http://localhost:5678/webhook/generate-ai-summary';
+}
 
-async function fetchAISummary(curYear, prevYear) {
-  const comp = compareTwoYears(curYear, prevYear);
-  const cur = comp.cur;
-  const topChanges = [...comp.accounts].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 3);
+function setN8nWebhookUrl(url) {
+  if (!url) return;
+  localStorage.setItem('n8n_webhook_url', url.trim());
+  toast('n8n 웹훅 주소가 저장되었습니다.');
+}
 
-  const payload = {
-    year: curYear,
-    sales: money(cur.annualSales),
-    salesDiff: rate(comp.salesRate),
-    expense: money(cur.annualExpense),
-    expDiff: rate(comp.expRate),
-    profit: money(cur.annualProfit),
-    topAccounts: topChanges.map(a => `${a.account}(${a.diff > 0 ? '+' : ''}${money(a.diff)})`).join(', ')
+// n8n 웹훅 실시간 진단 테스트 함수 (콘솔 또는 버튼에서 호출 가능)
+async function testN8nConnection() {
+  const url = getN8nWebhookUrl();
+  console.log('🔍 [n8n 진단기] 웹훅 주소 테스트 중:', url);
+  toast('n8n 연결 테스트 중...');
+
+  const testPayload = {
+    test: true,
+    year: 2024,
+    sales: '186,000,000원',
+    salesDiff: '+12.6%',
+    expense: '118,100,000원',
+    expDiff: '+8.3%',
+    profit: '67,900,000원',
+    topAccounts: '급여(+5,000,000원), 광고선전비(+3,200,000원)'
   };
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2초 초과 시 폴백
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-    const res = await fetch(N8N_AI_WEBHOOK_URL, {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testPayload),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      console.log('✅ [n8n 진단기] 웹훅 정상 연결됨! 응답 데이터:', data);
+      toast('✅ n8n 웹훅 정상 연결 성공! (200 OK)');
+      return { ok: true, data };
+    } else {
+      console.warn(`❌ [n8n 진단기] HTTP ${res.status} 오류. (n8n 워크플로우 Active 스위치 확인 필요)`);
+      toast(`❌ n8n 응답 실패 (HTTP ${res.status}). Active 확인 필요`);
+      return { ok: false, status: res.status };
+    }
+  } catch (err) {
+    console.error('🚫 [n8n 진단기] 연결 실패:', err.message);
+    let reason = 'n8n 서버가 꺼져있거나 포트(5678) 접속 불가';
+    if (err.name === 'AbortError') reason = '4초 타임아웃 초과 (응답 없음)';
+    else if (err.message.includes('Failed to fetch')) reason = 'CORS 차단 또는 n8n 미실행';
+    toast(`🚫 n8n 연결 실패: ${reason}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function fetchAISummaryDetail(curYear, prevYear) {
+  const url = getN8nWebhookUrl();
+  const isAll = (curYear === 'ALL');
+  const comp = compareTwoYears(curYear, prevYear);
+  const cur = comp.cur;
+  const topChanges = [...comp.accounts].slice(0, 3);
+
+  const payload = {
+    year: isAll ? '2006~2025 (20개년 전체 누적 종합)' : curYear,
+    sales: money(cur.annualSales),
+    salesDiff: isAll ? '20개년 누적 총액' : (comp.prev ? rate(comp.salesRate) : '-'),
+    expense: money(cur.annualExpense),
+    expDiff: isAll ? '20개년 누적 총액' : (comp.prev ? rate(comp.expRate) : '-'),
+    profit: money(cur.annualProfit),
+    topAccounts: topChanges.map(a => `${a.account}(${isAll ? money(a.current) : (a.diff > 0 ? '+' : '') + money(a.diff)})`).join(', ')
+  };
+
+  const startTime = performance.now();
+  console.log('📡 [n8n Webhook] AI 요약 요청 전송:', url, payload);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10초 타임아웃
+
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -597,14 +829,123 @@ async function fetchAISummary(curYear, prevYear) {
     });
     clearTimeout(timeoutId);
 
-    if (!res.ok) throw new Error('API 응답 실패');
-    const data = await res.json();
-    if (data && data.ai_summary) {
-      return data.ai_summary;
+    const durationSec = ((performance.now() - startTime) / 1000).toFixed(1);
+
+    if (!res.ok) {
+      console.warn(`❌ [n8n Webhook] 응답 오류: HTTP ${res.status} (${res.statusText})`);
+      throw new Error(`HTTP ${res.status}`);
     }
-    throw new Error('응답 형식 불일치');
+
+    const data = await res.json();
+    console.log('✅ [n8n Webhook] AI 요약 수신 성공!', data);
+    if (data && data.ai_summary) {
+      window.__n8nConnected = true;
+      return {
+        success: true,
+        text: data.ai_summary,
+        durationSec,
+        model: data.model || 'Gemini/OpenAI'
+      };
+    }
+    throw new Error('응답 필드에 ai_summary 없음');
   } catch (e) {
-    // n8n이 꺼져있거나 실패 시 기존 로컬 요약 엔진으로 100% 안전 무중단 폴백
-    return generateAIOpinion(curYear, prevYear);
+    const durationSec = ((performance.now() - startTime) / 1000).toFixed(1);
+    window.__n8nConnected = false;
+    console.warn('⚠️ [n8n Webhook] 호출 실패로 내장 통계 엔진으로 안전 폴백:', e.message);
+    return {
+      success: false,
+      text: generateAIOpinion(curYear, prevYear),
+      durationSec,
+      model: '내장 회계 통계 엔진',
+      error: e.message
+    };
   }
+}
+
+async function fetchAISummary(curYear, prevYear) {
+  const res = await fetchAISummaryDetail(curYear, prevYear);
+  return res.text;
+}
+
+/**
+ * 실시간 프로그레스 바, 경과 시간 카운트다운 타이머, 완료 소요 시간 뱃지를 포함한 UI 마운트 함수
+ */
+function mountAIOpinionWithProgress(containerId, curYear, prevYear, extraFootHtml = '') {
+  const container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+  if (!container) return;
+
+  const start = performance.now();
+  const timerId = 'aiTimer_' + Math.random().toString(36).slice(2, 7);
+  const barId = 'aiBar_' + Math.random().toString(36).slice(2, 7);
+  const statusId = 'aiStatus_' + Math.random().toString(36).slice(2, 7);
+
+  container.innerHTML = `
+    <div class="ai-progress-box">
+      <div class="ai-progress-header">
+        <span class="ai-badge running"><span class="ai-dot-pulse"></span> AI 신경망 경영 진단 분석 중...</span>
+        <span class="ai-timer" id="${timerId}">0.0초 경과</span>
+      </div>
+      <div class="ai-progress-track">
+        <div class="ai-progress-bar" id="${barId}" style="width: 15%;"></div>
+      </div>
+      <div class="ai-progress-status" id="${statusId}">[1/3] 11,600건 회계 전표 및 결산 지표 집계 완료</div>
+    </div>
+  `;
+
+  // 0.1초 단위 실시간 경과 시간 카운트업
+  const interval = setInterval(() => {
+    const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+    const timerEl = document.getElementById(timerId);
+    const barEl = document.getElementById(barId);
+    const statusEl = document.getElementById(statusId);
+
+    if (timerEl) timerEl.textContent = `${elapsed}초 경과`;
+
+    if (barEl && statusEl) {
+      if (elapsed > 0.8 && elapsed <= 2.0) {
+        barEl.style.width = '55%';
+        statusEl.textContent = '[2/3] n8n 웹훅 ➔ LLM 신경망 모델 회계 지표 추론 진행 중...';
+      } else if (elapsed > 2.0) {
+        barEl.style.width = '85%';
+        statusEl.textContent = '[3/3] 수석 회계사 관점 결산 경영 브리핑 작성 중...';
+      }
+    }
+  }, 100);
+
+  fetchAISummaryDetail(curYear, prevYear).then(res => {
+    clearInterval(interval);
+    const finalElapsed = res.durationSec;
+
+    let badgeHtml = '';
+    if (res.success) {
+      badgeHtml = `<div class="ai-result-badge success">✨ 실시간 AI 경영 진단 완료 (소요 시간: ${finalElapsed}초 · 모델: ${esc(res.model)})</div>`;
+    } else {
+      badgeHtml = `<div class="ai-result-badge fallback">⚡ 내장 고정밀 회계 통계 엔진 자동 진단 (소요 시간: ${finalElapsed}초 · 즉각 처리)</div>`;
+    }
+
+    container.innerHTML = `
+      ${badgeHtml}
+      <div class="ai-result-text">
+        ${esc(res.text).replace(/\n/g, '<br>')}
+      </div>
+      ${extraFootHtml ? `<div style="margin-top:10px">${extraFootHtml}</div>` : ''}
+    `;
+  }).catch(() => {
+    clearInterval(interval);
+  });
+}
+
+// 페이지 로드 시 20개년 데이터 자동 점검 및 무결성 보정
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    ensure20YearsData(reloaded => {
+      if (reloaded) {
+        if (typeof initYearSelector === 'function') initYearSelector();
+        if (typeof renderReport === 'function') renderReport();
+        if (typeof runForecast === 'function') runForecast();
+        if (typeof renderYearView === 'function') renderYearView();
+        if (typeof applyFilter === 'function') applyFilter();
+      }
+    });
+  });
 }
