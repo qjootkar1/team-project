@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 분개장 파일 업로드</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">DATA MANAGEMENT / UPLOAD</div>
+          <div class="page-title">분개장 파일 업로드</div>
+          <div class="subtitle">회계 프로그램에서 내보낸 엑셀(XLSX) 또는 CSV 전표 파일을 등록합니다. (담당: 김다은)</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">파일 등록</div>
+            <div class="muted small">분개장 원본 파일을 선택하거나 영역에 끌어다 놓으세요.</div>
+          </div>
+          <span class="tag">CSV · XLSX · XLS</span>
+        </div>
+
+        <div class="drop" id="drop">
+          <div class="drop-icon">⇧</div>
+          <h3 style="margin-bottom:6px">분개장 파일을 여기에 놓으세요</h3>
+          <p class="muted small" style="margin-bottom:14px">CSV 또는 Excel 파일 지원 · 대용량 행 자동 파싱</p>
+          <input id="file" type="file" accept=".csv,.xlsx,.xls" class="hidden">
+          <button class="btn primary" id="choose">파일 선택</button>
+          <div id="fileName" class="small muted" style="margin-top:12px"></div>
+        </div>
+
+        <div class="row" style="margin-top:16px">
+          <div class="field">
+            <label>데이터 기준 연도 (선택)</label>
+            <input id="year" type="number" placeholder="예: 2024" min="1900" max="2100">
+          </div>
+          <div class="field" style="flex:1">
+            <label>데이터셋 명칭 (선택)</label>
+            <input id="datasetName" placeholder="예: 2024년 결산 분개장">
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">업로드 전 데이터 검증</div>
+            <div class="muted small">파일 구조를 사전 점검하고 상위 10개 행을 미리보기합니다.</div>
+          </div>
+          <span id="status" class="tag">파일 대기</span>
+        </div>
+
+        <div id="preview" class="empty">
+          <strong>미리보기 데이터가 없습니다.</strong>
+          분개장 파일을 선택하면 구조와 열 인식이 표시됩니다.
+        </div>
+
+        <div class="row" style="justify-content:flex-end;margin-top:16px">
+          <button class="btn" id="reset">초기화</button>
+          <button class="btn primary" id="save" disabled>데이터 등록 완료</button>
+        </div>
+      </div>
+
+      <div class="notice">
+        <b>[열 이름 매핑 안내]</b> 거래일자/일자, 계정과목, 차변, 대변, 적요, 거래처를 자동으로 인식하여 표준화합니다. 원본 파일의 추가 열도 누락 없이 보존됩니다.
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    renderSidebar('upload');
+
+    let parsed = [], currentFile = null;
+    const $ = id => document.getElementById(id);
+
+    $('choose').onclick = () => $('file').click();
+    $('file').onchange = e => readFile(e.target.files[0]);
+
+    const drop = $('drop');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.add('drag');
+    }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+    }));
+    drop.addEventListener('drop', e => {
+      e.preventDefault();
+      drop.classList.remove('drag');
+      readFile(e.dataTransfer.files[0]);
+    });
+
+    function readFile(file) {
+      if (!file) return;
+      if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
+        toast('CSV 또는 Excel(.xlsx, .xls) 파일만 업로드할 수 있습니다.');
+        return;
+      }
+      currentFile = file;
+      $('fileName').textContent = file.name + ' · ' + (file.size / 1024).toFixed(1) + ' KB';
+
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'csv') {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            if (window.XLSX && XLSX.read) {
+              const wb = XLSX.read(reader.result, { type: 'string' });
+              parsed = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+            } else {
+              // 오프라인 fallback: 내장 parseCSV 사용
+              parsed = parseCSV(reader.result);
+            }
+            showPreview();
+          } catch (e) {
+            // 실패 시 내장 parseCSV 재시도
+            try {
+              parsed = parseCSV(reader.result);
+              showPreview();
+            } catch (err2) {
+              toast('CSV 파일 파싱 중 오류가 발생했습니다.');
+            }
+          }
+        };
+        reader.readAsText(file, 'UTF-8');
+      } else {
+        const reader = new FileReader();
+        reader.onload = e => {
+          try {
+            const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+            parsed = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+            showPreview();
+          } catch (err) {
+            toast('Excel 파일 읽기 오류: 파일 형식을 확인하세요.');
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    }
+
+    function showPreview() {
+      if (!parsed.length) {
+        $('preview').innerHTML = '<div class="empty">파일에 유효한 데이터 행이 없습니다.</div>';
+        $('save').disabled = true;
+        return;
+      }
+
+      const keys = Object.keys(parsed[0]);
+      const normalized = parsed.map(normalizeRow);
+      const years = normalized.map(yearOf).filter(Boolean);
+      const detected = years.length ? years.sort((a, b) => a - b)[Math.floor(years.length / 2)] : '';
+
+      $('year').value = $('year').value || detected;
+      $('status').textContent = parsed.length.toLocaleString() + '행 감지';
+      $('status').className = 'tag green';
+
+      $('preview').innerHTML = `
+        <div class="row" style="margin-bottom:12px">
+          <span class="tag green">${parsed.length.toLocaleString()}개 전표 행</span>
+          <span class="tag">${keys.length}개 열</span>
+          <span class="muted small">인식된 헤더: ${keys.map(esc).join(' · ')}</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>${keys.map(k => `<th>${esc(k)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${parsed.slice(0, 10).map(r => '<tr>' + keys.map(k => `<td>${esc(r[k])}</td>`).join('') + '</tr>').join('')}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small" style="margin-top:8px">검증을 위해 상위 10개 행만 미리 표시합니다. 등록 시 전체 데이터가 보존됩니다.</p>
+      `;
+      $('save').disabled = false;
+    }
+
+    $('save').onclick = () => {
+      if (!parsed.length || !currentFile) return;
+      const s = loadStore();
+      const rows = parsed.map(r => ({ ...normalizeRow(r), raw: r }));
+      const years = rows.map(yearOf).filter(Boolean);
+      const year = Number($('year').value) || (years.length ? Math.min(...years) : null);
+
+      const ds = {
+        id: 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: $('datasetName').value.trim() || currentFile.name,
+        originalFileName: currentFile.name,
+        year,
+        uploadedAt: new Date().toISOString(),
+        rowCount: rows.length,
+        columns: Object.keys(parsed[0] || {}),
+        rows
+      };
+
+      s.datasets.push(ds);
+      saveStore(s);
+      toast('분개장 데이터가 성공적으로 등록되었습니다.');
+      setTimeout(() => location.href = 'data.html', 500);
+    };
+
+    $('reset').onclick = () => {
+      parsed = [];
+      currentFile = null;
+      $('file').value = '';
+      $('fileName').textContent = '';
+      $('year').value = '';
+      $('datasetName').value = '';
+      $('preview').innerHTML = '<div class="empty"><strong>미리보기 데이터가 없습니다.</strong>파일을 선택하면 여기에 표시됩니다.</div>';
+      $('status').textContent = '파일 대기';
+      $('status').className = 'tag';
+      $('save').disabled = true;
+    };
+  </script>
+</body>
+</html>

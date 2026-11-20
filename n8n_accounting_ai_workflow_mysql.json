@@ -1,0 +1,163 @@
+{
+  "name": "AccountScope - 회계 AI 자동 요약 (HeidiSQL / MySQL 연동)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-ai-summary",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "전표 데이터 수신 (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 수신된 회계 데이터 파싱 및 AI 프롬프트 구성\nconst item = $input.first().json;\n\nconst year = item.year || new Date().getFullYear();\nconst sales = item.sales || '0원';\nconst salesDiff = item.salesDiff || '0%';\nconst expense = item.expense || '0원';\nconst expDiff = item.expDiff || '0%';\nconst profit = item.profit || '0원';\nconst topAccounts = item.topAccounts || '특이 변동 없음';\n\nconst prompt = `당신은 수석 공인회계사(CPA)입니다. 아래 결산 데이터를 정밀 분석하여 경영진 브리핑용 요약 보고서를 3~4문장으로 작성하십시오.\n\n[결산 지표 요약]\n- 분석 대상 연도: ${year}년\n- 연간 총 순매출: ${sales} (전년 대비: ${salesDiff})\n- 연간 총 지출액: ${expense} (전년 대비: ${expDiff})\n- 당기 영업 마진: ${profit}\n- 주요 변동 계정과목: ${topAccounts}\n\n[작성 지침]\n1. 과장된 미사여구 없이 객관적이고 신뢰감 있는 비즈니스 어조로 작성할 것.\n2. 매출 성장세와 지출 증가세를 대조하여 수익성(마진율) 변화를 날카롭게 짚을 것.\n3. 가장 변동폭이 큰 판관비/원가 계정에 대한 실무적 관리 제언을 1문장 포함할 것.`;\n\nreturn {\n  json: {\n    year,\n    sales,\n    salesDiff,\n    expense,\n    expDiff,\n    profit,\n    topAccounts,\n    prompt\n  }\n};"
+      },
+      "id": "code-prep",
+      "name": "프롬프트 데이터 전처리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "id": "ai-chain",
+      "name": "AI 경영 진단 요약 (LLM)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        660,
+        500
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_API_CREDENTIAL",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"ai_summary\": {{ JSON.stringify($json.text) }},\n  \"model\": \"gpt-4o-mini\",\n  \"generated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-webhook",
+      "name": "웹앱에 AI 요약문 응답",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "accounting_ai_summaries",
+        "columns": "target_year,prompt_payload,ai_summary,model_name",
+        "options": {}
+      },
+      "id": "mysql-log",
+      "name": "HeidiSQL (MySQL/MariaDB) 자동 저장",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        920,
+        480
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "HEIDISQL_MYSQL_CREDENTIAL",
+          "name": "HeidiSQL MySQL/MariaDB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "전표 데이터 수신 (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "프롬프트 데이터 전처리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "프롬프트 데이터 전처리": {
+      "main": [
+        [
+          {
+            "node": "AI 경영 진단 요약 (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 경영 진단 요약 (LLM)": {
+      "main": [
+        [
+          {
+            "node": "웹앱에 AI 요약문 응답",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HeidiSQL (MySQL/MariaDB) 자동 저장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI 경영 진단 요약 (LLM)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

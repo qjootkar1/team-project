@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 차기년도 매출 추정 및 경영 분석</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">ANALYSIS / FORECAST</div>
+          <div class="page-title">차기년도 매출 추정 및 경영 분석</div>
+          <div class="subtitle">과거 실적 추세를 바탕으로 차기 연도 매출액을 추정하고 재무 분석 의견을 제시합니다. (담당: 손유석)</div>
+        </div>
+      </div>
+
+      <!-- 기준 연도 선택 -->
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <div class="row">
+            <span style="font-weight:700">예측 기준 연도:</span>
+            <div class="field" style="min-width:140px">
+              <select id="selYear" onchange="runForecast()"></select>
+            </div>
+            <span class="muted small">선택한 연도의 다음 해 실적을 예측합니다.</span>
+          </div>
+          <button class="btn primary" onclick="runForecast()">매출 추정 계산</button>
+        </div>
+      </div>
+
+      <!-- 차기년도 예상 매출 요약 카드 (3열) -->
+      <div class="grid three" style="margin-bottom:20px;">
+        <div class="stat">
+          <div class="stat-label" id="lblNextYear">다음 연도 총 예상 매출</div>
+          <div class="stat-value" id="valForecastTotal" style="color:var(--brand)">0원</div>
+          <div class="stat-foot" id="footGrowthRate">연평균 성장률 적용</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">예상 순매출 증감액</div>
+          <div class="stat-value" id="valExpectedDiff" style="color:var(--green)">0원</div>
+          <div class="stat-foot">기준 연도 실적 대비 순증</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">추정 모델</div>
+          <div class="stat-value" style="font-size:20px;color:var(--ink)">가중 계절성 모델</div>
+          <div class="stat-foot">과거 12개월 가중 배분 적용</div>
+        </div>
+      </div>
+
+      <!-- 경영 분석 의견 카드 -->
+      <div class="panel" style="background:#fafcff;border-color:#c8dcfa">
+        <div class="panel-head">
+          <div class="row">
+            <span class="panel-title" style="color:#1e4b8a">경영 지표 분석 의견</span>
+            <span class="tag">실적 추세 분석</span>
+          </div>
+        </div>
+        <div id="aiOpinionBox" style="font-size:13.5px;line-height:1.8;color:#243b5d;padding:4px 0">
+          분석 의견을 산출하고 있습니다...
+        </div>
+      </div>
+
+      <!-- 월별 예상 매출 추이 SVG 차트 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">월별 매출 실적 vs 차기년도 추정 추이</div>
+          <div class="row">
+            <span class="tag">실선: 당기 실적</span>
+            <span class="tag">점선: 차기 예측</span>
+          </div>
+        </div>
+        <div id="forecastLineChart" style="padding:10px 0"></div>
+      </div>
+
+      <!-- FUN-11 월별 상세 예측 원장 대조 테이블 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">1월 ~ 12월 월별 예측 상세 내역표</div>
+          <span class="muted small">월별 가중 배분 집계표</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="center">월</th>
+                <th class="right">기준 연도 실적</th>
+                <th class="right">차기년도 예상 매출</th>
+                <th class="right">월별 예상 증감액</th>
+                <th class="center">월별 비중</th>
+              </tr>
+            </thead>
+            <tbody id="forecastTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('forecast');
+
+    const ys = availableYears();
+    const selYear = document.getElementById('selYear');
+
+    if (!ys.length) {
+      selYear.innerHTML = `<option value="">데이터 없음</option>`;
+    } else {
+      selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년 기준</option>`).join('');
+    }
+
+    function runForecast() {
+      const baseYear = Number(selYear.value);
+      if (!baseYear) {
+        document.getElementById('aiOpinionBox').innerHTML = '분석할 데이터가 없습니다. 사이드바의 <b>[샘플 데이터 로드]</b>를 클릭하세요.';
+        document.getElementById('forecastTbody').innerHTML = `<tr><td colspan="5" class="empty">데이터가 없습니다.</td></tr>`;
+        return;
+      }
+
+      // 1. 차기년도 매출 추정 연산
+      const fc = forecastNextYear(baseYear);
+      document.getElementById('lblNextYear').textContent = `${fc.nextYear}년 총 예상 매출`;
+      document.getElementById('valForecastTotal').textContent = money(fc.forecastTotal);
+      document.getElementById('footGrowthRate').textContent = `추세 성장률 ${rate(fc.growthRate)} 반영`;
+      document.getElementById('valExpectedDiff').textContent = (fc.expectedDiff >= 0 ? '+' : '') + money(fc.expectedDiff);
+
+      // 2. 경영 지표 분석 의견 도출
+      const prevYear = ys.includes(baseYear - 1) ? baseYear - 1 : null;
+      const opinion = generateAIOpinion(baseYear, prevYear);
+      document.getElementById('aiOpinionBox').innerHTML = `
+        <b>[경영 실적 및 추세 분석]</b><br>
+        ${esc(opinion)}<br><br>
+        <small class="muted">※ 차기 ${fc.nextYear}년도는 최근 성장률 추세를 감안할 때 약 ${money(fc.forecastTotal)}의 매출 달성이 전망되며, 분기별 판관비 모니터링이 권장됩니다.</small>
+      `;
+
+      // n8n AI API 연동 시 실시간 LLM 요약으로 점진적 업데이트
+      if (typeof fetchAISummary === 'function') {
+        fetchAISummary(baseYear, prevYear).then(aiText => {
+          if (aiText && aiText !== opinion) {
+            document.getElementById('aiOpinionBox').innerHTML = `
+              <b>[경영 실적 및 추세 분석 (AI 실시간 연동)]</b><br>
+              ${esc(aiText)}<br><br>
+              <small class="muted">※ 차기 ${fc.nextYear}년도는 최근 성장률 추세를 감안할 때 약 ${money(fc.forecastTotal)}의 매출 달성이 전망되며, 분기별 판관비 모니터링이 권장됩니다.</small>
+            `;
+          }
+        }).catch(() => {});
+      }
+
+      // 3. SVG 라인 차트 렌더링
+      const chartSeries = [
+        { name: `${fc.baseYear}년 실적`, color: '#667085', values: fc.months.map(m => m.actual) },
+        { name: `${fc.nextYear}년 예상`, color: '#286cce', dash: true, values: fc.months.map(m => m.forecast) }
+      ];
+      document.getElementById('forecastLineChart').innerHTML = createSvgLineChart(chartSeries, 720, 220);
+
+      // 4. 월별 상세 테이블
+      const tbody = document.getElementById('forecastTbody');
+      tbody.innerHTML = fc.months.map(m => {
+        const ratio = fc.forecastTotal > 0 ? ((m.forecast / fc.forecastTotal) * 100).toFixed(1) + '%' : '-';
+        return `
+          <tr>
+            <td class="center"><b>${m.month}월</b></td>
+            <td class="right" style="color:var(--muted)">${money(m.actual)}</td>
+            <td class="right" style="color:var(--brand);font-weight:700">${money(m.forecast)}</td>
+            <td class="right" style="color:var(--green);font-weight:600">${m.diff >= 0 ? '+' : ''}${money(m.diff)}</td>
+            <td class="center"><span class="tag">${ratio}</span></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    runForecast();
+  </script>
+</body>
+</html>

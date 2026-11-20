@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 전표 데이터 조회</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">DATA MANAGEMENT / INQUIRY</div>
+          <div class="page-title">전표 데이터 조회</div>
+          <div class="subtitle">등록된 전체 분개장 거래 원장을 통합 검색하고 필터링합니다. (담당: 김다은)</div>
+        </div>
+      </div>
+
+      <!-- 상단 필터 및 검색 컨트롤 바 -->
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <div class="row" style="flex:1">
+            <input id="q" class="search" style="min-width:240px" placeholder="계정과목, 거래처, 적요 검색 (Enter)">
+            <div class="field" style="min-width:130px">
+              <select id="fYear">
+                <option value="">전체 연도</option>
+              </select>
+            </div>
+            <div class="field" style="min-width:140px">
+              <select id="fCategory">
+                <option value="">전체 분류</option>
+                <option value="매출">매출 계정</option>
+                <option value="지출">지출 계정</option>
+                <option value="자산/부채">자산/부채</option>
+                <option value="기타">기타</option>
+              </select>
+            </div>
+            <button class="btn primary" id="btnSearch">검색</button>
+            <button class="btn" id="btnReset">필터 초기화</button>
+          </div>
+          <button class="btn soft" id="btnExport">CSV 내보내기</button>
+        </div>
+      </div>
+
+      <!-- 데이터 테이블 패널 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="row">
+            <span class="panel-title">거래 원장 내역</span>
+            <span class="tag green" id="resultCount">0건</span>
+          </div>
+          <div class="row" id="pageInfo" style="font-size:12px;color:var(--muted)">1 / 1 페이지</div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="center">거래일자</th>
+                <th>계정과목</th>
+                <th>분류</th>
+                <th>거래처</th>
+                <th>적요</th>
+                <th class="right">차변금액(출금)</th>
+                <th class="right">대변금액(입금)</th>
+                <th>데이터셋</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- 페이징 컨트롤 -->
+        <div class="row" style="justify-content:center;margin-top:18px;gap:8px" id="pagination">
+          <button class="btn" id="prevPage">◀ 이전 50건</button>
+          <span id="pageNav" style="font-weight:600;padding:0 8px"></span>
+          <button class="btn" id="nextPage">다음 50건 ▶</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('data');
+
+    const PAGE_SIZE = 50;
+    let currentPage = 1;
+    let filteredRows = [];
+
+    const rows = allRows();
+    const ys = availableYears();
+
+    // 연도 필터 옵션 바인딩
+    const fYearSelect = document.getElementById('fYear');
+    ys.forEach(y => {
+      const opt = document.createElement('option');
+      opt.value = y;
+      opt.textContent = y + '년';
+      fYearSelect.appendChild(opt);
+    });
+
+    function applyFilter() {
+      const q = document.getElementById('q').value.trim().toLowerCase();
+      const selYear = document.getElementById('fYear').value;
+      const selCat = document.getElementById('fCategory').value;
+
+      filteredRows = rows.filter(r => {
+        const nr = normalizeRow(r);
+        if (selYear && String(yearOf(r)) !== selYear) return false;
+        if (selCat && nr.category !== selCat) return false;
+        if (q) {
+          const text = `${nr.accountName} ${nr.customer} ${nr.description}`.toLowerCase();
+          if (!text.includes(q)) return false;
+        }
+        return true;
+      });
+
+      currentPage = 1;
+      renderTable();
+    }
+
+    function renderTable() {
+      const total = filteredRows.length;
+      const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+
+      document.getElementById('resultCount').textContent = total.toLocaleString() + '건';
+      document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages} 페이지`;
+      document.getElementById('pageNav').textContent = `${currentPage} / ${totalPages}`;
+      document.getElementById('prevPage').disabled = currentPage <= 1;
+      document.getElementById('nextPage').disabled = currentPage >= totalPages;
+
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const pageRows = filteredRows.slice(start, start + PAGE_SIZE);
+
+      const tbody = document.getElementById('tbody');
+      if (!pageRows.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty">조건에 일치하는 거래 내역이 없습니다.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = pageRows.map(r => {
+        const nr = normalizeRow(r);
+        const catTag = nr.category === '매출' ? 'tag blue' : nr.category === '지출' ? 'tag amber' : 'tag';
+        return `
+          <tr>
+            <td class="center"><b>${esc(nr.date)}</b></td>
+            <td><b>${esc(nr.accountName)}</b></td>
+            <td><span class="${catTag}">${esc(nr.category)}</span></td>
+            <td>${esc(nr.customer || '-')}</td>
+            <td>${esc(nr.description || '-')}</td>
+            <td class="right" style="color:var(--ink)">${nr.debit ? money(nr.debit) : '-'}</td>
+            <td class="right" style="color:var(--brand);font-weight:600">${nr.credit ? money(nr.credit) : '-'}</td>
+            <td class="muted small">${esc(r.datasetName || '-')}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    document.getElementById('btnSearch').onclick = applyFilter;
+    document.getElementById('q').onkeydown = e => { if (e.key === 'Enter') applyFilter(); };
+    document.getElementById('fYear').onchange = applyFilter;
+    document.getElementById('fCategory').onchange = applyFilter;
+
+    document.getElementById('btnReset').onclick = () => {
+      document.getElementById('q').value = '';
+      document.getElementById('fYear').value = '';
+      document.getElementById('fCategory').value = '';
+      applyFilter();
+    };
+
+    document.getElementById('prevPage').onclick = () => {
+      if (currentPage > 1) { currentPage--; renderTable(); }
+    };
+    document.getElementById('nextPage').onclick = () => {
+      currentPage++; renderTable();
+    };
+
+    document.getElementById('btnExport').onclick = () => {
+      if (!filteredRows.length) { toast('내보낼 데이터가 없습니다.'); return; }
+      let csv = '\uFEFF거래일자,계정과목,분류,거래처,적요,차변금액,대변금액\n';
+      filteredRows.forEach(r => {
+        const nr = normalizeRow(r);
+        csv += `"${nr.date}","${nr.accountName}","${nr.category}","${nr.customer}","${nr.description}",${nr.debit},${nr.credit}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `분개장_원장조회_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      toast('CSV 파일이 다운로드되었습니다.');
+    };
+
+    // 초기 실행: 세션 스토리지 연도 전달 체크
+    const savedYear = sessionStorage.getItem('filter_year');
+    if (savedYear && ys.map(String).includes(savedYear)) {
+      document.getElementById('fYear').value = savedYear;
+      sessionStorage.removeItem('filter_year');
+      applyFilter();
+    } else {
+      filteredRows = rows;
+      renderTable();
+    }
+  </script>
+</body>
+</html>

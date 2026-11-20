@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 계정과목 분류 및 12개월 집계</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">ANALYSIS / CLASSIFICATION</div>
+          <div class="page-title">계정과목별 손익 분류 및 월별 집계</div>
+          <div class="subtitle">분개 전표를 계정 특성에 따라 분류하고 12개월 월별 실적을 집계합니다. (담당: 이영언)</div>
+        </div>
+      </div>
+
+      <!-- 상단 연도 선택 바 -->
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <div class="row">
+            <span style="font-weight:700">집계 기준 연도:</span>
+            <div class="field" style="min-width:140px">
+              <select id="selYear" onchange="loadClassifyView()"></select>
+            </div>
+          </div>
+          <span class="tag green" id="statRows">0건의 전표 집계</span>
+        </div>
+      </div>
+
+      <!-- 연간 핵심 집계 요약 카드 3종 (FUN-06) -->
+      <div class="grid three" style="margin-bottom:20px;">
+        <div class="stat">
+          <div class="stat-label">연간 총 순매출 (입금)</div>
+          <div class="stat-value" id="kpi-sales" style="color:var(--brand)">0원</div>
+          <div class="stat-foot">매출 계정 대변 − 차변 집계</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">연간 총 지출액 (출금)</div>
+          <div class="stat-value" id="kpi-expenses" style="color:var(--amber)">0원</div>
+          <div class="stat-foot">지출 계정 차변 − 대변 집계</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">당기 영업 마진 (차액)</div>
+          <div class="stat-value" id="kpi-profit" style="color:var(--green)">0원</div>
+          <div class="stat-foot">총 매출액 − 총 지출액 기준</div>
+        </div>
+      </div>
+
+      <!-- 12개월 월별 매출·지출 집계 테이블 (FUN-06) -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">1월 ~ 12월 월별 매출 및 지출 추이</div>
+          <span class="muted small">회계 월별 손익 분석표</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="center">월별</th>
+                <th class="right">월 순매출</th>
+                <th class="right">월 지출액</th>
+                <th class="right">월 영업마진 (차액)</th>
+                <th class="center">마진 상태</th>
+              </tr>
+            </thead>
+            <tbody id="monthlyTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 계정과목 자동 분류 현황 (FUN-05) -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">계정과목별 분류 결과</div>
+            <div class="muted small">손익 및 재무상태표 표준 분류 (매출, 지출, 자산/부채)</div>
+          </div>
+          <span class="tag" id="accountCount">0개 계정</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>계정과목명</th>
+                <th class="center">계정 구분</th>
+                <th class="right">발생 건수</th>
+                <th class="right">연간 집계 금액</th>
+                <th>분류 상세</th>
+              </tr>
+            </thead>
+            <tbody id="accountTbody"></tbody>
+          </table>
+        </div>
+        <div id="unclassNotice" class="notice" style="margin-top:16px;display:none"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('classify');
+
+    const ys = availableYears();
+    const selYear = document.getElementById('selYear');
+
+    if (!ys.length) {
+      selYear.innerHTML = `<option value="">데이터 없음</option>`;
+    } else {
+      selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년도</option>`).join('');
+    }
+
+    function loadClassifyView() {
+      const year = Number(selYear.value);
+      if (!year) {
+        document.getElementById('monthlyTbody').innerHTML = `<tr><td colspan="5" class="empty">등록된 분개장 데이터가 없습니다. 사이드바의 <b>[샘플 데이터 로드]</b>를 클릭하세요.</td></tr>`;
+        document.getElementById('accountTbody').innerHTML = `<tr><td colspan="5" class="empty">계정과목 데이터가 없습니다.</td></tr>`;
+        return;
+      }
+
+      const agg = aggregateYearData(year);
+      document.getElementById('statRows').textContent = `${agg.totalRows.toLocaleString()}건의 전표 집계 완료`;
+      document.getElementById('kpi-sales').textContent = money(agg.annualSales);
+      document.getElementById('kpi-expenses').textContent = money(agg.annualExpense);
+      document.getElementById('kpi-profit').textContent = money(agg.annualProfit);
+
+      // 월별 테이블 렌더링
+      const mTbody = document.getElementById('monthlyTbody');
+      mTbody.innerHTML = agg.monthlySales.map((sales, i) => {
+        const exp = agg.monthlyExpense[i];
+        const profit = sales - exp;
+        const tag = profit > 0 ? '<span class="tag green">흑자</span>' : profit < 0 ? '<span class="tag red">적자</span>' : '<span class="tag">0</span>';
+        return `
+          <tr>
+            <td class="center"><b>${i + 1}월</b></td>
+            <td class="right" style="color:var(--brand);font-weight:600">${money(sales)}</td>
+            <td class="right" style="color:var(--amber)">${money(exp)}</td>
+            <td class="right" style="font-weight:700;color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(profit)}</td>
+            <td class="center">${tag}</td>
+          </tr>
+        `;
+      }).join('');
+
+      // 계정과목별 분류 현황 분석
+      const rows = allRows().filter(r => yearOf(r) === year);
+      const accMap = {};
+
+      rows.forEach(r => {
+        const nr = normalizeRow(r);
+        if (!accMap[nr.accountName]) {
+          accMap[nr.accountName] = {
+            name: nr.accountName,
+            category: nr.category,
+            count: 0,
+            amount: 0
+          };
+        }
+        accMap[nr.accountName].count++;
+        accMap[nr.accountName].amount += nr.amount;
+      });
+
+      const accList = Object.values(accMap).sort((a, b) => b.amount - a.amount);
+      document.getElementById('accountCount').textContent = `${accList.length}개 계정 분석됨`;
+
+      const aTbody = document.getElementById('accountTbody');
+      aTbody.innerHTML = accList.map(a => {
+        const catTag = a.category === '매출' ? 'tag blue' : a.category === '지출' ? 'tag amber' : a.category === '자산/부채' ? 'tag' : 'tag red';
+        const ruleDesc = a.category === '매출' ? '매출 및 영업수익 항목' :
+                         a.category === '지출' ? '판관비 및 영업비용 항목' :
+                         a.category === '자산/부채' ? '유동/비유동 자산·부채 항목' : '기타 항목 (수동 확인 권장)';
+        return `
+          <tr>
+            <td><b>${esc(a.name)}</b></td>
+            <td class="center"><span class="${catTag}">${esc(a.category)}</span></td>
+            <td class="right">${a.count.toLocaleString()}건</td>
+            <td class="right" style="font-weight:600">${money(a.amount)}</td>
+            <td class="muted small">${ruleDesc}</td>
+          </tr>
+        `;
+      }).join('');
+
+      // 미분류 계정 알림
+      const unclass = accList.filter(a => a.category === '기타');
+      const unclassEl = document.getElementById('unclassNotice');
+      if (unclass.length) {
+        unclassEl.style.display = 'block';
+        unclassEl.innerHTML = `<b>[미분류 계정 안내]</b> ${unclass.map(u => `<b>${esc(u.name)}</b>(${u.count}건)`).join(', ')}은(는) 기본 규칙에 매칭되지 않아 기타로 분류되었습니다. 필요 시 계정과목 분류 규칙을 점검하세요.`;
+      } else {
+        unclassEl.style.display = 'none';
+      }
+    }
+
+    loadClassifyView();
+  </script>
+</body>
+</html>

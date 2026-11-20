@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 전년 대비 매출·지출 비교 분석</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">ANALYSIS / COMPARISON</div>
+          <div class="page-title">전년 대비 매출·지출 비교 및 증감 분석</div>
+          <div class="subtitle">당기 실적과 전년도 실적을 대조하여 주요 계정과목 변동 내역을 분석합니다. (담당: 채민서)</div>
+        </div>
+      </div>
+
+      <!-- 연도 선택 컨트롤 바 -->
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <div class="row">
+            <span style="font-weight:700">분석 기준 연도:</span>
+            <div class="field" style="min-width:130px">
+              <select id="selCurYear" onchange="runComparison()"></select>
+            </div>
+            <span style="font-weight:700;margin-left:14px">대조 비교 연도:</span>
+            <div class="field" style="min-width:130px">
+              <select id="selPrevYear" onchange="runComparison()"></select>
+            </div>
+          </div>
+          <button class="btn soft" onclick="runComparison()">전년 비교 조회</button>
+        </div>
+      </div>
+
+      <!-- 핵심 비교 카드 (2열) -->
+      <div class="grid two" style="margin-bottom:20px;">
+        <!-- 매출 비교 카드 -->
+        <div class="stat">
+          <div class="row" style="justify-content:space-between">
+            <span class="stat-label">전년 대비 총 매출 비교</span>
+            <span id="badgeSalesRate" class="tag">-</span>
+          </div>
+          <div class="stat-value" id="valCurSales" style="color:var(--brand)">0원</div>
+          <div class="stat-foot" id="footSalesDiff" style="line-height:1.7;margin-top:8px">
+            비교 대상 연도 매출과 대조 중...
+          </div>
+        </div>
+
+        <!-- 지출 비교 카드 -->
+        <div class="stat">
+          <div class="row" style="justify-content:space-between">
+            <span class="stat-label">전년 대비 총 지출 비교</span>
+            <span id="badgeExpRate" class="tag">-</span>
+          </div>
+          <div class="stat-value" id="valCurExp" style="color:var(--amber)">0원</div>
+          <div class="stat-foot" id="footExpDiff" style="line-height:1.7;margin-top:8px">
+            비교 대상 연도 지출과 대조 중...
+          </div>
+        </div>
+      </div>
+
+      <!-- FUN-09 계정과목별 지출 증감 수평 바 차트 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">계정과목별 지출 비교 현황</div>
+            <div class="muted small">전년도와 기준 연도의 주요 판관비 지출액 규모를 비교합니다.</div>
+          </div>
+          <span class="tag">지출 항목 비교</span>
+        </div>
+        <div id="chartBarWrap" style="padding:10px 0"></div>
+      </div>
+
+      <!-- FUN-09 상세 대조 테이블 및 정렬 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">계정과목별 지출 증감 상세 대조표</div>
+          <div class="row">
+            <span class="muted small">정렬 기준:</span>
+            <select id="sortMode" onchange="renderAccountTable()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line)">
+              <option value="diffAsc">증가액 큰 순 (▲)</option>
+              <option value="diffDesc">절감액 큰 순 (▼)</option>
+              <option value="current">기준 연도 지출 큰 순</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>계정과목</th>
+                <th class="right">전년도 지출</th>
+                <th class="right">기준 연도 지출</th>
+                <th class="right">증감액</th>
+                <th class="right">증감률</th>
+                <th class="center">증감 추이</th>
+              </tr>
+            </thead>
+            <tbody id="compareTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('compare');
+
+    const ys = availableYears();
+    const selCur = document.getElementById('selCurYear');
+    const selPrev = document.getElementById('selPrevYear');
+
+    if (ys.length >= 2) {
+      selCur.innerHTML = ys.map((y, i) => `<option value="${y}" ${i === 0 ? 'selected' : ''}>${y}년 (기준)</option>`).join('');
+      selPrev.innerHTML = ys.map((y, i) => `<option value="${y}" ${i === 1 ? 'selected' : ''}>${y}년 (비교)</option>`).join('');
+    } else if (ys.length === 1) {
+      selCur.innerHTML = `<option value="${ys[0]}">${ys[0]}년</option>`;
+      selPrev.innerHTML = `<option value="">비교 연도 없음</option>`;
+    } else {
+      selCur.innerHTML = `<option value="">데이터 없음</option>`;
+      selPrev.innerHTML = `<option value="">데이터 없음</option>`;
+    }
+
+    let currentComparison = null;
+
+    function runComparison() {
+      const curY = Number(selCur.value);
+      const prevY = selPrev.value ? Number(selPrev.value) : null;
+
+      if (!curY) {
+        document.getElementById('compareTbody').innerHTML = `<tr><td colspan="6" class="empty">비교할 데이터가 없습니다.</td></tr>`;
+        return;
+      }
+
+      if (prevY && curY === prevY) {
+        toast('기준 연도와 비교 연도가 동일합니다. 서로 다른 연도를 선택하세요.');
+      }
+
+      currentComparison = compareTwoYears(curY, prevY);
+      const comp = currentComparison;
+
+      // 1. 매출 비교
+      document.getElementById('valCurSales').textContent = money(comp.cur.annualSales);
+      if (comp.prev) {
+        const sDiffStr = comp.salesDiff > 0 ? `+${money(comp.salesDiff)} 증가 (▲)` : comp.salesDiff < 0 ? `${money(comp.salesDiff)} 감소 (▼)` : '변동 없음 (―)';
+        document.getElementById('footSalesDiff').innerHTML = `
+          전년(${comp.prevYear}년) 매출: <b>${money(comp.prev.annualSales)}</b><br>
+          전년 대비 변동: <b class="${comp.salesDiff >= 0 ? 'up' : 'down'}">${sDiffStr}</b>
+        `;
+        document.getElementById('badgeSalesRate').textContent = rate(comp.salesRate);
+        document.getElementById('badgeSalesRate').className = comp.salesDiff >= 0 ? 'tag red' : 'tag blue';
+      } else {
+        document.getElementById('footSalesDiff').textContent = '대조할 전년도 자료가 없습니다.';
+        document.getElementById('badgeSalesRate').textContent = '-';
+      }
+
+      // 2. 지출 비교
+      document.getElementById('valCurExp').textContent = money(comp.cur.annualExpense);
+      if (comp.prev) {
+        const eDiffStr = comp.expDiff > 0 ? `+${money(comp.expDiff)} 증가 (▲)` : comp.expDiff < 0 ? `${money(comp.expDiff)} 절감 (▼)` : '변동 없음 (―)';
+        document.getElementById('footExpDiff').innerHTML = `
+          전년(${comp.prevYear}년) 지출: <b>${money(comp.prev.annualExpense)}</b><br>
+          전년 대비 변동: <b class="${comp.expDiff >= 0 ? 'up' : 'down'}">${eDiffStr}</b>
+        `;
+        document.getElementById('badgeExpRate').textContent = rate(comp.expRate);
+        document.getElementById('badgeExpRate').className = comp.expDiff >= 0 ? 'tag red' : 'tag green';
+      } else {
+        document.getElementById('footExpDiff').textContent = '대조할 전년도 자료가 없습니다.';
+        document.getElementById('badgeExpRate').textContent = '-';
+      }
+
+      // 3. 바 차트 시각화
+      const topAccs = [...comp.accounts].sort((a, b) => (b.current + b.previous) - (a.current + a.previous)).slice(0, 6);
+      const chartRows = topAccs.map(a => ({
+        label: a.account,
+        a: a.previous,
+        b: a.current
+      }));
+      document.getElementById('chartBarWrap').innerHTML = createSvgBarChart(chartRows, 720);
+
+      renderAccountTable();
+    }
+
+    function renderAccountTable() {
+      if (!currentComparison) return;
+      const comp = currentComparison;
+      const sort = document.getElementById('sortMode').value;
+
+      let list = [...comp.accounts];
+      if (sort === 'diffAsc') {
+        list.sort((a, b) => b.diff - a.diff);
+      } else if (sort === 'diffDesc') {
+        list.sort((a, b) => a.diff - b.diff);
+      } else {
+        list.sort((a, b) => b.current - a.current);
+      }
+
+      const tbody = document.getElementById('compareTbody');
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty">지출 계정과목 내역이 없습니다.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.map(a => {
+        const badge = a.diff > 0 ? '<span class="tag red">증가 ▲</span>' : a.diff < 0 ? '<span class="tag green">절감 ▼</span>' : '<span class="tag">유지</span>';
+        return `
+          <tr>
+            <td><b>${esc(a.account)}</b></td>
+            <td class="right" style="color:var(--muted)">${money(a.previous)}</td>
+            <td class="right" style="font-weight:600">${money(a.current)}</td>
+            <td class="right" style="font-weight:700;color:${a.diff > 0 ? 'var(--red)' : a.diff < 0 ? 'var(--green)' : 'var(--muted)'}">
+              ${a.diff > 0 ? '+' : ''}${money(a.diff)}
+            </td>
+            <td class="right">${rate(a.rate)}</td>
+            <td class="center">${badge}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    runComparison();
+  </script>
+</body>
+</html>

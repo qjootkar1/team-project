@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 연도별 데이터 관리</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top">
+        <div>
+          <div class="crumb">DATA MANAGEMENT / YEARS</div>
+          <div class="page-title">연도별 데이터 관리</div>
+          <div class="subtitle">연도별 분개장 원장 보유 현황을 조회하고 데이터셋을 관리합니다. (담당: 김다은)</div>
+        </div>
+      </div>
+
+      <!-- 연도별 통계 카드 그리드 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">연도별 데이터 집계 현황</div>
+          <span class="muted small">전표일자 기준으로 자동 분류됩니다.</span>
+        </div>
+        <div id="yearCards" class="grid three"></div>
+      </div>
+
+      <!-- 등록 파일 데이터셋 관리 목록 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">업로드된 분개장 파일 관리</div>
+          <a class="btn primary" href="upload.html">신규 분개장 등록</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>파일명</th>
+                <th>기준 연도</th>
+                <th class="right">전표 수</th>
+                <th>등록 일시</th>
+                <th class="center">데이터 관리</th>
+              </tr>
+            </thead>
+            <tbody id="datasetTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('years');
+
+    function renderYearView() {
+      const store = loadStore();
+      const rows = allRows();
+      const ys = availableYears();
+
+      // 연도별 집계 카드
+      const yearCards = document.getElementById('yearCards');
+      if (!ys.length) {
+        yearCards.innerHTML = `
+          <div class="empty" style="grid-column:1/-1">
+            <strong>등록된 연도 데이터가 없습니다.</strong>
+            분개장 파일을 등록하거나 상단 샘플 데이터를 로드하세요.
+          </div>`;
+      } else {
+        yearCards.innerHTML = ys.map(y => {
+          const yRows = rows.filter(r => yearOf(r) === y);
+          const totalDebit = yRows.reduce((s, r) => s + (num(r.debit) || 0), 0);
+          const totalCredit = yRows.reduce((s, r) => s + (num(r.credit) || 0), 0);
+
+          return `
+            <div class="stat">
+              <div class="row" style="justify-content:space-between">
+                <span class="tag blue" style="font-size:12px;font-weight:800">${y}년</span>
+                <span class="muted small">${yRows.length.toLocaleString()}건의 전표</span>
+              </div>
+              <div class="stat-value" style="font-size:20px;margin-top:12px">${money(totalCredit)}</div>
+              <div class="stat-foot" style="margin-top:8px">
+                차변(출금) 합계: ${money(totalDebit)}<br>
+                대변(입금) 합계: ${money(totalCredit)}
+              </div>
+              <div class="row" style="margin-top:14px">
+                <a class="btn small" href="data.html" onclick="sessionStorage.setItem('filter_year', '${y}')">원장 조회</a>
+                <button class="btn danger small" onclick="deleteYearData(${y})">연도 데이터 삭제</button>
+              </div>
+            </div>`;
+        }).join('');
+      }
+
+      // 데이터셋 파일 목록
+      const dsTbody = document.getElementById('datasetTable');
+      if (!store.datasets.length) {
+        dsTbody.innerHTML = `<tr><td colspan="5" class="empty">등록된 파일이 없습니다.</td></tr>`;
+      } else {
+        dsTbody.innerHTML = store.datasets.map(d => `
+          <tr>
+            <td><b>${esc(d.name)}</b></td>
+            <td><span class="tag blue">${d.year ? d.year + '년' : '자동감지'}</span></td>
+            <td class="right">${(d.rows || []).length.toLocaleString()}행</td>
+            <td>${new Date(d.uploadedAt).toLocaleString('ko-KR')}</td>
+            <td class="center">
+              <button class="btn danger small" onclick="deleteDataset('${d.id}')">삭제</button>
+            </td>
+          </tr>`).join('');
+      }
+    }
+
+    function deleteDataset(id) {
+      if (!confirm('해당 분개장 파일을 삭제하시겠습니까? 관련 거래 전표가 함께 제거됩니다.')) return;
+      const store = loadStore();
+      store.datasets = store.datasets.filter(d => d.id !== id);
+      saveStore(store);
+      toast('분개장 파일이 삭제되었습니다.');
+      renderYearView();
+    }
+
+    function deleteYearData(year) {
+      if (!confirm(`${year}년도의 모든 거래 내역을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+      const store = loadStore();
+      store.datasets.forEach(d => {
+        d.rows = d.rows.filter(r => yearOf(r) !== Number(year));
+      });
+      // 행이 0개가 된 빈 데이터셋 정리
+      store.datasets = store.datasets.filter(d => d.rows.length > 0);
+      saveStore(store);
+      toast(`${year}년도 데이터가 삭제되었습니다.`);
+      renderYearView();
+    }
+
+    renderYearView();
+  </script>
+</body>
+</html>

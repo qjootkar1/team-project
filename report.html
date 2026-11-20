@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccountScope - 경영 분석 보고서 및 결재 문서 출력</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* 보고서 및 인쇄 특화 스타일 */
+    .report-sheet {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 36px 42px;
+      margin-bottom: 24px;
+    }
+    .report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2.5px solid var(--brand);
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+    }
+    .sign-table {
+      border-collapse: collapse;
+      font-size: 11px;
+      text-align: center;
+    }
+    .sign-table th, .sign-table td {
+      border: 1px solid #94a3b8;
+      padding: 4px 10px;
+    }
+    .sign-table th { background: #f8fafc; font-weight: 700; color: #475467; }
+    .sign-table td { height: 38px; vertical-align: middle; }
+
+    .sec-h {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--brand);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 5px;
+      margin: 22px 0 12px;
+    }
+
+    @media print {
+      body { background: #fff !important; }
+      .app { display: block !important; }
+      .sidebar, .top, .no-print, .toast, .side-note { display: none !important; }
+      .main { padding: 0 !important; max-width: 100% !important; margin: 0 !important; }
+      .report-sheet { border: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <div class="top no-print">
+        <div>
+          <div class="crumb">REPORT / MANAGEMENT</div>
+          <div class="page-title">경영 분석 보고서 및 결재 문서 출력</div>
+          <div class="subtitle">핵심 재무 지표와 주요 증감 요인을 통합한 결재용 A4 공식 보고서를 생성합니다. (담당: 조유빈)</div>
+        </div>
+      </div>
+
+      <!-- 상단 컨트롤 패널 (인쇄 시 숨김) -->
+      <div class="panel no-print">
+        <div class="row" style="justify-content:space-between">
+          <div class="row">
+            <span style="font-weight:700">보고서 대상 연도:</span>
+            <div class="field" style="min-width:130px">
+              <select id="selReportYear" onchange="renderReport()"></select>
+            </div>
+            <label class="row" style="margin-left:14px;cursor:pointer">
+              <input type="checkbox" id="chkSign" checked onchange="toggleSignBox()"> 결재란 포함
+            </label>
+          </div>
+          <div class="row">
+            <button class="btn primary" onclick="printReport()">A4 PDF 다운로드 / 인쇄</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FUN-13 주요 증감 원인 요약 패널 -->
+      <div class="panel no-print">
+        <div class="panel-head">
+          <div class="panel-title">주요 증감 원인 분석 요약</div>
+          <span class="muted small">전년 대비 변동폭이 큰 주요 계정과목 심층 분석</span>
+        </div>
+        <div id="causesGrid" class="grid two"></div>
+      </div>
+
+      <!-- A4 정밀 인쇄 서식 영역 (FUN-14, 15) -->
+      <div class="report-sheet" id="printArea">
+        <!-- 1. 헤더 및 결재란 -->
+        <div class="report-header">
+          <div>
+            <h2 style="font-size:22px;margin:0 0 6px">회계 분개장 종합 경영 분석 보고서</h2>
+            <div class="muted small">
+              분석 대상: <b id="repPeriod" style="color:var(--ink)">-</b> | 발행일시: <span id="repDate">-</span> | 작성자: <b>조유빈 (재무분석팀)</b>
+            </div>
+          </div>
+          <div id="signBox">
+            <table class="sign-table">
+              <thead>
+                <tr><th>담당 (조유빈)</th><th>검토 (팀장)</th><th>승인 (대표이사)</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>(인)</td><td></td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 2. 핵심 요약 KPI -->
+        <div class="sec-h">1. 경영 핵심 손익 지표 요약</div>
+        <div class="grid four" style="margin-bottom:16px;">
+          <div class="stat" style="padding:12px;box-shadow:none">
+            <div class="stat-label">총 매출액</div>
+            <div class="stat-value" id="rSales" style="font-size:18px;color:var(--brand)">0원</div>
+            <div class="stat-foot" id="rSalesRate">전년 대비 -</div>
+          </div>
+          <div class="stat" style="padding:12px;box-shadow:none">
+            <div class="stat-label">총 지출액</div>
+            <div class="stat-value" id="rExp" style="font-size:18px;color:var(--amber)">0원</div>
+            <div class="stat-foot" id="rExpRate">전년 대비 -</div>
+          </div>
+          <div class="stat" style="padding:12px;box-shadow:none">
+            <div class="stat-label">당기 영업 마진</div>
+            <div class="stat-value" id="rProfit" style="font-size:18px;color:var(--green)">0원</div>
+            <div class="stat-foot">매출 − 지출 기준</div>
+          </div>
+          <div class="stat" style="padding:12px;box-shadow:none">
+            <div class="stat-label">차기년도 예상 매출</div>
+            <div class="stat-value" id="rForecast" style="font-size:18px;color:var(--brand)">0원</div>
+            <div class="stat-foot">가중 추세 적용</div>
+          </div>
+        </div>
+
+        <!-- 3. AI 종합 분석 의견 -->
+        <div class="sec-h">2. AI 및 재무 통계 기반 종합 진단 의견</div>
+        <div id="rOpinion" style="background:#f8fafc;border-left:4px solid var(--brand);padding:12px 16px;line-height:1.7;font-size:12.5px;color:#334155;border-radius:4px">
+          -
+        </div>
+
+        <!-- 4. 실적 시각화 차트 2종 -->
+        <div class="sec-h">3. 월별 실적 추이 및 계정과목 지출 비교</div>
+        <div class="grid two" style="margin-bottom:14px;">
+          <div style="border:1px solid var(--line);border-radius:8px;padding:12px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px">월별 매출·지출 추이</div>
+            <div id="repChartLine"></div>
+          </div>
+          <div style="border:1px solid var(--line);border-radius:8px;padding:12px">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px">주요 계정과목 지출 비교 (전년 vs 당해)</div>
+            <div id="repChartBar"></div>
+          </div>
+        </div>
+
+        <!-- 5. 주요 원인 요약 테이블 -->
+        <div class="sec-h">4. 주요 증감 요인 및 원인 요약</div>
+        <div class="table-wrap">
+          <table style="font-size:12px">
+            <thead>
+              <tr>
+                <th>계정과목</th>
+                <th class="right">전년도 지출</th>
+                <th class="right">당해 연도 지출</th>
+                <th class="right">증감액</th>
+                <th class="right">증감률</th>
+                <th>주요 원인 분석</th>
+              </tr>
+            </thead>
+            <tbody id="rCausesTbody"></tbody>
+          </table>
+        </div>
+
+        <!-- 6. 보고서 푸터 -->
+        <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:10px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between">
+          <span>본 문서는 내부 경영 판단 참고용 공식 분석 보고서입니다.</span>
+          <span>출력 시스템: AccountScope 회계 시스템 (작성: 조유빈)</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="common.js"></script>
+  <script>
+    renderSidebar('report');
+
+    const ys = availableYears();
+    const selYear = document.getElementById('selReportYear');
+
+    if (!ys.length) {
+      selYear.innerHTML = `<option value="">데이터 없음</option>`;
+    } else {
+      selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년도 보고서</option>`).join('');
+    }
+
+    function renderReport() {
+      const year = Number(selYear.value);
+      if (!year) {
+        document.getElementById('rOpinion').innerHTML = '<div class="empty">등록된 분개장 데이터가 없습니다. 상단 또는 사이드바의 <b>[샘플 데이터 로드]</b>를 클릭하세요.</div>';
+        document.getElementById('causesGrid').innerHTML = '<div class="empty" style="grid-column:1/-1">데이터가 없습니다.</div>';
+        document.getElementById('rCausesTbody').innerHTML = '<tr><td colspan="6" class="empty">등록된 데이터가 없습니다.</td></tr>';
+        return;
+      }
+
+      const prevYear = ys.includes(year - 1) ? year - 1 : null;
+      const comp = compareTwoYears(year, prevYear);
+      const cur = comp.cur;
+      const fc = forecastNextYear(year);
+      const causes = getCausesSummary(year, prevYear);
+
+      // 헤더 메타정보
+      document.getElementById('repPeriod').textContent = `${year}년 (대조 비교: ${prevYear ? prevYear + '년' : '없음'})`;
+      document.getElementById('repDate').textContent = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      // KPI 카드
+      document.getElementById('rSales').textContent = money(cur.annualSales);
+      document.getElementById('rSalesRate').textContent = comp.prev ? `전년 대비 ${rate(comp.salesRate)}` : '전년 자료 없음';
+      document.getElementById('rExp').textContent = money(cur.annualExpense);
+      document.getElementById('rExpRate').textContent = comp.prev ? `전년 대비 ${rate(comp.expRate)}` : '전년 자료 없음';
+      document.getElementById('rProfit').textContent = money(cur.annualProfit);
+      document.getElementById('rForecast').textContent = money(fc.forecastTotal);
+
+      // 경영 분석 의견
+      document.getElementById('rOpinion').textContent = generateAIOpinion(year, prevYear);
+      if (typeof fetchAISummary === 'function') {
+        fetchAISummary(year, prevYear).then(aiText => {
+          if (aiText) document.getElementById('rOpinion').textContent = aiText;
+        }).catch(() => {});
+      }
+
+      // 증감 요인 요약 패널 렌더링
+      const causesGrid = document.getElementById('causesGrid');
+      if (!causes.length) {
+        causesGrid.innerHTML = `<div class="empty" style="grid-column:1/-1">비교할 전년도 지출 변동 데이터가 없습니다.</div>`;
+      } else {
+        causesGrid.innerHTML = causes.map(c => `
+          <div class="stat" style="border-left:4px solid ${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">
+            <div class="row" style="justify-content:space-between">
+              <b>${esc(c.title)}</b>
+              <span class="${c.type === 'up' ? 'tag red' : 'tag green'}">${c.type === 'up' ? '지출 증가 ▲' : '비용 절감 ▼'}</span>
+            </div>
+            <p class="muted small" style="margin:8px 0">${esc(c.desc)}</p>
+            <div class="row" style="justify-content:space-between;border-top:1px dashed var(--line);padding-top:6px;font-size:11px">
+              <span>계정과목: <b>${esc(c.account)}</b></span>
+              <span style="font-weight:700;color:${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">변동: ${c.diff > 0 ? '+' : ''}${money(c.diff)}</span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // 인라인 실적 시각화 SVG 차트 2종 렌더링
+      const chartSeries = [
+        { name: '매출액', color: '#286cce', values: cur.monthlySales },
+        { name: '지출액', color: '#a96b12', values: cur.monthlyExpense }
+      ];
+      document.getElementById('repChartLine').innerHTML = createSvgLineChart(chartSeries, 380, 160);
+
+      const topAccs = [...comp.accounts].sort((a, b) => (b.current + b.previous) - (a.current + a.previous)).slice(0, 4);
+      const chartRows = topAccs.map(a => ({ label: a.account, a: a.previous, b: a.current }));
+      document.getElementById('repChartBar').innerHTML = createSvgBarChart(chartRows, 380);
+
+      // A4 보고서 원인 테이블
+      const rTbody = document.getElementById('rCausesTbody');
+      if (!causes.length) {
+        rTbody.innerHTML = `<tr><td colspan="6" class="empty">비교 대상 지출 항목이 없습니다.</td></tr>`;
+      } else {
+        rTbody.innerHTML = causes.map(c => `
+          <tr>
+            <td><b>${esc(c.account)}</b></td>
+            <td class="right" style="color:var(--muted)">${money(c.prev)}</td>
+            <td class="right" style="font-weight:600">${money(c.cur)}</td>
+            <td class="right" style="font-weight:700;color:${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">${c.diff > 0 ? '+' : ''}${money(c.diff)}</td>
+            <td class="right">${rate(c.rate)}</td>
+            <td style="color:#475467">${esc(c.desc)}</td>
+          </tr>
+        `).join('');
+      }
+    }
+
+    function toggleSignBox() {
+      document.getElementById('signBox').style.display = document.getElementById('chkSign').checked ? 'block' : 'none';
+    }
+
+    function printReport() {
+      window.print();
+    }
+
+    renderReport();
+  </script>
+</body>
+</html>
