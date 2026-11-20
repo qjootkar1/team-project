@@ -38,13 +38,9 @@
         </div>
 
         <div class="row" style="margin-top:16px">
-          <div class="field">
-            <label>데이터 기준 연도 (선택)</label>
-            <input id="year" type="number" placeholder="예: 2024" min="1900" max="2100">
-          </div>
           <div class="field" style="flex:1">
             <label>데이터셋 명칭 (선택)</label>
-            <input id="datasetName" placeholder="예: 2024년 결산 분개장">
+            <input id="datasetName" placeholder="예: 20년치_분개장_2006-2025 (비워둘 시 파일명 자동 적용)">
           </div>
         </div>
       </div>
@@ -158,16 +154,16 @@
 
       const keys = Object.keys(parsed[0]);
       const normalized = parsed.map(normalizeRow);
-      const years = normalized.map(yearOf).filter(Boolean);
-      const detected = years.length ? years.sort((a, b) => a - b)[Math.floor(years.length / 2)] : '';
+      const years = [...new Set(normalized.map(yearOf).filter(Boolean))].sort((a, b) => a - b);
+      const periodLabel = years.length > 1 ? `${years[0]}년 ~ ${years[years.length - 1]}년 (${years.length}개년 자동 감지)` : (years[0] ? `${years[0]}년 전표` : '연도 미상');
 
-      $('year').value = $('year').value || detected;
       $('status').textContent = parsed.length.toLocaleString() + '행 감지';
       $('status').className = 'tag green';
 
       $('preview').innerHTML = `
-        <div class="row" style="margin-bottom:12px">
+        <div class="row" style="margin-bottom:12px;gap:8px">
           <span class="tag green">${parsed.length.toLocaleString()}개 전표 행</span>
+          <span class="tag blue">${periodLabel}</span>
           <span class="tag">${keys.length}개 열</span>
           <span class="muted small">인식된 헤더: ${keys.map(esc).join(' · ')}</span>
         </div>
@@ -181,7 +177,7 @@
             </tbody>
           </table>
         </div>
-        <p class="muted small" style="margin-top:8px">검증을 위해 상위 10개 행만 미리 표시합니다. 등록 시 전체 데이터가 보존됩니다.</p>
+        <p class="muted small" style="margin-top:8px">검증을 위해 상위 10개 행만 미리 표시합니다. 등록 시 전체 ${periodLabel} 데이터가 보존됩니다.</p>
       `;
       $('save').disabled = false;
     }
@@ -190,8 +186,8 @@
       if (!parsed.length || !currentFile) return;
       const s = loadStore();
       const rows = parsed.map(r => ({ ...normalizeRow(r), raw: r }));
-      const years = rows.map(yearOf).filter(Boolean);
-      const year = Number($('year').value) || (years.length ? Math.min(...years) : null);
+      const years = [...new Set(rows.map(yearOf).filter(Boolean))].sort((a, b) => a - b);
+      const year = years.length > 1 ? `${years[0]}-${years[years.length - 1]}` : (years[0] || null);
 
       const ds = {
         id: 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
@@ -204,9 +200,10 @@
         rows
       };
 
-      s.datasets.push(ds);
+      // 기존 다른 분개장 데이터(데모 샘플, 과거 파일 등)와 섞이지 않도록 완전히 단독 분개장으로 교체 등록
+      s.datasets = [ds];
       saveStore(s);
-      toast('분개장 데이터가 성공적으로 등록되었습니다.');
+      toast('분개장 데이터가 독립 데이터셋으로 성공적으로 등록되었습니다.');
       setTimeout(() => location.href = 'data.html', 500);
     };
 
@@ -215,7 +212,6 @@
       currentFile = null;
       $('file').value = '';
       $('fileName').textContent = '';
-      $('year').value = '';
       $('datasetName').value = '';
       $('preview').innerHTML = '<div class="empty"><strong>미리보기 데이터가 없습니다.</strong>파일을 선택하면 여기에 표시됩니다.</div>';
       $('status').textContent = '파일 대기';

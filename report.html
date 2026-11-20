@@ -190,82 +190,104 @@
   <script>
     renderSidebar('report');
 
-    const ys = availableYears();
     const selYear = document.getElementById('selReportYear');
 
-    if (!ys.length) {
-      selYear.innerHTML = `<option value="">데이터 없음</option>`;
-    } else {
-      selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년도 보고서</option>`).join('');
+    function initYearSelector() {
+      const ys = availableYears();
+      if (!ys.length) {
+        selYear.innerHTML = `<option value="">데이터 없음</option>`;
+        return;
+      }
+      const minYear = Math.min(...ys);
+      const maxYear = Math.max(...ys);
+      let opts = `<option value="ALL">20개년 전체 누적 종합 분석 (${minYear}~${maxYear}년)</option>`;
+      opts += ys.map(y => `<option value="${y}">${y}년도 보고서</option>`).join('');
+      selYear.innerHTML = opts;
     }
 
+    initYearSelector();
+
     function renderReport() {
-      const year = Number(selYear.value);
-      if (!year) {
+      const ys = availableYears();
+      const val = selYear.value;
+      if (!val) {
         document.getElementById('rOpinion').innerHTML = '<div class="empty">등록된 분개장 데이터가 없습니다. 상단 또는 사이드바의 <b>[샘플 데이터 로드]</b>를 클릭하세요.</div>';
         document.getElementById('causesGrid').innerHTML = '<div class="empty" style="grid-column:1/-1">데이터가 없습니다.</div>';
         document.getElementById('rCausesTbody').innerHTML = '<tr><td colspan="6" class="empty">등록된 데이터가 없습니다.</td></tr>';
         return;
       }
 
-      const prevYear = ys.includes(year - 1) ? year - 1 : null;
+      const isAll = (val === 'ALL');
+      const year = isAll ? 'ALL' : Number(val);
+      const prevYear = isAll ? null : (ys.includes(year - 1) ? year - 1 : null);
       const comp = compareTwoYears(year, prevYear);
       const cur = comp.cur;
-      const fc = forecastNextYear(year);
+      const fc = forecastNextYear(isAll ? Math.max(...ys) : year);
       const causes = getCausesSummary(year, prevYear);
 
-      // 헤더 메타정보
-      document.getElementById('repPeriod').textContent = `${year}년 (대조 비교: ${prevYear ? prevYear + '년' : '없음'})`;
+      // 1. 헤더 메타정보
+      document.getElementById('repPeriod').textContent = isAll
+        ? `2006년 ~ 2025년 (20개년 전체 누적 종합 분석)`
+        : `${year}년 (대조 비교: ${prevYear ? prevYear + '년' : '없음'})`;
       document.getElementById('repDate').textContent = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 
-      // KPI 카드
+      // 2. KPI 카드
       document.getElementById('rSales').textContent = money(cur.annualSales);
-      document.getElementById('rSalesRate').textContent = comp.prev ? `전년 대비 ${rate(comp.salesRate)}` : '전년 자료 없음';
+      document.getElementById('rSalesRate').textContent = isAll ? '20개년 총 매출 합계' : (comp.prev ? `전년 대비 ${rate(comp.salesRate)}` : '전년 자료 없음');
       document.getElementById('rExp').textContent = money(cur.annualExpense);
-      document.getElementById('rExpRate').textContent = comp.prev ? `전년 대비 ${rate(comp.expRate)}` : '전년 자료 없음';
+      document.getElementById('rExpRate').textContent = isAll ? '20개년 총 지출 합계' : (comp.prev ? `전년 대비 ${rate(comp.expRate)}` : '전년 자료 없음');
       document.getElementById('rProfit').textContent = money(cur.annualProfit);
       document.getElementById('rForecast').textContent = money(fc.forecastTotal);
 
-      // 경영 분석 의견
-      document.getElementById('rOpinion').textContent = generateAIOpinion(year, prevYear);
-      if (typeof fetchAISummary === 'function') {
-        fetchAISummary(year, prevYear).then(aiText => {
-          if (aiText) document.getElementById('rOpinion').textContent = aiText;
-        }).catch(() => {});
-      }
+      // 3. AI 경영 분석 의견 (실시간 프로그레스 바 & 경과 시간 타이머 포함)
+      mountAIOpinionWithProgress('rOpinion', year, prevYear);
 
-      // 증감 요인 요약 패널 렌더링
+      // 4. 증감 요인 요약 패널 렌더링
       const causesGrid = document.getElementById('causesGrid');
       if (!causes.length) {
-        causesGrid.innerHTML = `<div class="empty" style="grid-column:1/-1">비교할 전년도 지출 변동 데이터가 없습니다.</div>`;
+        causesGrid.innerHTML = `<div class="empty" style="grid-column:1/-1">분석할 지출 데이터가 없습니다.</div>`;
       } else {
         causesGrid.innerHTML = causes.map(c => `
           <div class="stat" style="border-left:4px solid ${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">
             <div class="row" style="justify-content:space-between">
               <b>${esc(c.title)}</b>
-              <span class="${c.type === 'up' ? 'tag red' : 'tag green'}">${c.type === 'up' ? '지출 증가 ▲' : '비용 절감 ▼'}</span>
+              <span class="${c.type === 'up' ? 'tag red' : 'tag green'}">${isAll ? '주요 비중' : (c.type === 'up' ? '지출 증가 ▲' : '비용 절감 ▼')}</span>
             </div>
             <p class="muted small" style="margin:8px 0">${esc(c.desc)}</p>
             <div class="row" style="justify-content:space-between;border-top:1px dashed var(--line);padding-top:6px;font-size:11px">
               <span>계정과목: <b>${esc(c.account)}</b></span>
-              <span style="font-weight:700;color:${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">변동: ${c.diff > 0 ? '+' : ''}${money(c.diff)}</span>
+              <span style="font-weight:700;color:var(--ink)">금액: ${money(c.cur || c.diff)}</span>
             </div>
           </div>
         `).join('');
       }
 
-      // 인라인 실적 시각화 SVG 차트 2종 렌더링
-      const chartSeries = [
-        { name: '매출액', color: '#286cce', values: cur.monthlySales },
-        { name: '지출액', color: '#a96b12', values: cur.monthlyExpense }
-      ];
-      document.getElementById('repChartLine').innerHTML = createSvgLineChart(chartSeries, 380, 160);
+      // 5. 인라인 실적 시각화 SVG 차트 2종 렌더링
+      if (isAll && cur.yearlyBreakdown) {
+        const yrKeys = Object.keys(cur.yearlyBreakdown).sort();
+        const chartSeries = [
+          { name: '연간 매출액', color: '#286cce', values: yrKeys.map(y => cur.yearlyBreakdown[y].sales) },
+          { name: '연간 지출액', color: '#a96b12', values: yrKeys.map(y => cur.yearlyBreakdown[y].expense) }
+        ];
+        const labels = yrKeys.map(y => y.slice(2) + '년');
+        document.getElementById('repChartLine').innerHTML = createSvgLineChart(chartSeries, labels, 380, 160);
 
-      const topAccs = [...comp.accounts].sort((a, b) => (b.current + b.previous) - (a.current + a.previous)).slice(0, 4);
-      const chartRows = topAccs.map(a => ({ label: a.account, a: a.previous, b: a.current }));
-      document.getElementById('repChartBar').innerHTML = createSvgBarChart(chartRows, 380);
+        const topAccs = comp.accounts.slice(0, 4);
+        const chartRows = topAccs.map(a => ({ label: a.account, a: 0, b: a.current }));
+        document.getElementById('repChartBar').innerHTML = createSvgBarChart(chartRows, 380);
+      } else {
+        const chartSeries = [
+          { name: '매출액', color: '#286cce', values: cur.monthlySales },
+          { name: '지출액', color: '#a96b12', values: cur.monthlyExpense }
+        ];
+        document.getElementById('repChartLine').innerHTML = createSvgLineChart(chartSeries, 380, 160);
 
-      // A4 보고서 원인 테이블
+        const topAccs = [...comp.accounts].sort((a, b) => (b.current + b.previous) - (a.current + a.previous)).slice(0, 4);
+        const chartRows = topAccs.map(a => ({ label: a.account, a: a.previous, b: a.current }));
+        document.getElementById('repChartBar').innerHTML = createSvgBarChart(chartRows, 380);
+      }
+
+      // 6. A4 보고서 원인 테이블
       const rTbody = document.getElementById('rCausesTbody');
       if (!causes.length) {
         rTbody.innerHTML = `<tr><td colspan="6" class="empty">비교 대상 지출 항목이 없습니다.</td></tr>`;
@@ -273,9 +295,9 @@
         rTbody.innerHTML = causes.map(c => `
           <tr>
             <td><b>${esc(c.account)}</b></td>
-            <td class="right" style="color:var(--muted)">${money(c.prev)}</td>
+            <td class="right" style="color:var(--muted)">${isAll ? '-' : money(c.prev)}</td>
             <td class="right" style="font-weight:600">${money(c.cur)}</td>
-            <td class="right" style="font-weight:700;color:${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">${c.diff > 0 ? '+' : ''}${money(c.diff)}</td>
+            <td class="right" style="font-weight:700;color:${c.type === 'up' ? 'var(--red)' : 'var(--green)'}">${isAll ? money(c.cur) : (c.diff > 0 ? '+' : '') + money(c.diff)}</td>
             <td class="right">${rate(c.rate)}</td>
             <td style="color:#475467">${esc(c.desc)}</td>
           </tr>

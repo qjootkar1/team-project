@@ -105,16 +105,20 @@
   <script>
     renderSidebar('forecast');
 
-    const ys = availableYears();
     const selYear = document.getElementById('selYear');
 
-    if (!ys.length) {
-      selYear.innerHTML = `<option value="">데이터 없음</option>`;
-    } else {
-      selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년 기준</option>`).join('');
+    function initSelector() {
+      const ys = availableYears();
+      if (!ys.length) {
+        selYear.innerHTML = `<option value="">데이터 없음</option>`;
+      } else {
+        selYear.innerHTML = ys.map(y => `<option value="${y}">${y}년 기준 (차기 ${y + 1}년 예측)</option>`).join('');
+      }
     }
+    initSelector();
 
     function runForecast() {
+      const ys = availableYears();
       const baseYear = Number(selYear.value);
       if (!baseYear) {
         document.getElementById('aiOpinionBox').innerHTML = '분석할 데이터가 없습니다. 사이드바의 <b>[샘플 데이터 로드]</b>를 클릭하세요.';
@@ -129,27 +133,10 @@
       document.getElementById('footGrowthRate').textContent = `추세 성장률 ${rate(fc.growthRate)} 반영`;
       document.getElementById('valExpectedDiff').textContent = (fc.expectedDiff >= 0 ? '+' : '') + money(fc.expectedDiff);
 
-      // 2. 경영 지표 분석 의견 도출
+      // 2. 경영 지표 분석 의견 도출 (실시간 프로그레스 바 & 경과 시간 타이머 포함)
       const prevYear = ys.includes(baseYear - 1) ? baseYear - 1 : null;
-      const opinion = generateAIOpinion(baseYear, prevYear);
-      document.getElementById('aiOpinionBox').innerHTML = `
-        <b>[경영 실적 및 추세 분석]</b><br>
-        ${esc(opinion)}<br><br>
-        <small class="muted">※ 차기 ${fc.nextYear}년도는 최근 성장률 추세를 감안할 때 약 ${money(fc.forecastTotal)}의 매출 달성이 전망되며, 분기별 판관비 모니터링이 권장됩니다.</small>
-      `;
-
-      // n8n AI API 연동 시 실시간 LLM 요약으로 점진적 업데이트
-      if (typeof fetchAISummary === 'function') {
-        fetchAISummary(baseYear, prevYear).then(aiText => {
-          if (aiText && aiText !== opinion) {
-            document.getElementById('aiOpinionBox').innerHTML = `
-              <b>[경영 실적 및 추세 분석 (AI 실시간 연동)]</b><br>
-              ${esc(aiText)}<br><br>
-              <small class="muted">※ 차기 ${fc.nextYear}년도는 최근 성장률 추세를 감안할 때 약 ${money(fc.forecastTotal)}의 매출 달성이 전망되며, 분기별 판관비 모니터링이 권장됩니다.</small>
-            `;
-          }
-        }).catch(() => {});
-      }
+      const extraFoot = `<small class="muted">※ 차기 ${fc.nextYear}년도는 최근 성장률 추세를 감안할 때 약 ${money(fc.forecastTotal)}의 매출 달성이 전망되며, 분기별 판관비 모니터링이 권장됩니다.</small>`;
+      mountAIOpinionWithProgress('aiOpinionBox', baseYear, prevYear, extraFoot);
 
       // 3. SVG 라인 차트 렌더링
       const chartSeries = [
